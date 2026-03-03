@@ -69,7 +69,7 @@ jobs:
           make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
 
       - name: Run Trivy rootfs scan
-        uses: aquasecurity/trivy-action@v0.34.2
+        uses: aquasecurity/trivy-action@0.34.2
         with:
           scan-type: fs
           scan-ref: output/br-out/target
