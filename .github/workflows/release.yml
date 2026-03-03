@@ -130,6 +130,6 @@ jobs:
             dist/trivy-rootfs.sarif
 
       - name: SBOM upload 
-        uses: advanced-security/sbom-dependency-submission-action@v0.2.0
+        uses: advanced-security/spdx-dependency-submission-action@v0.2.0
         with:
           filePath: "dist/sbom.spdx.json"

@@ -91,6 +91,6 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: SBOM upload 
-        uses: advanced-security/sbom-dependency-submission-action@v0.2.0
+        uses: advanced-security/spdx-dependency-submission-action@v0.2.0
         with:
           filePath: "sbom.spdx.json"
