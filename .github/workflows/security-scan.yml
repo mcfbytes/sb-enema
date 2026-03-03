@@ -87,10 +87,10 @@ jobs:
         uses: anchore/sbom-action@v0.23.0
         with:
           path: output/br-out/target/
-          format: cyclonedx-json
-          output-file: sbom.cdx.json
+          format: spdx-json
+          output-file: sbom.spdx.json
 
       - name: SBOM upload 
-        uses: advanced-security/spdx-dependency-submission-action@v0.2.0
+        uses: advanced-security/sbom-dependency-submission-action@v0.2.0
         with:
-          filePath: "sbom.cdx.json"
+          filePath: "sbom.spdx.json"

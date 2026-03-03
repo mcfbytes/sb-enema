@@ -110,8 +110,8 @@ jobs:
         uses: anchore/sbom-action@v0.23.0
         with:
           path: output/br-out/target/
-          format: cyclonedx-json
-          output-file: dist/sbom.cdx.json
+          format: spdx-json
+          output-file: dist/sbom.spdx.json
 
       - name: Attest build provenance
         uses: actions/attest@v4
@@ -126,5 +126,10 @@ jobs:
             dist/sb-enema.img
             dist/README.md
             dist/SHA256SUMS
-            dist/sbom.cdx.json
+            dist/sbom.spdx.json
             dist/trivy-rootfs.sarif
+
+      - name: SBOM upload 
+        uses: advanced-security/sbom-dependency-submission-action@v0.2.0
+        with:
+          filePath: "dist/sbom.spdx.json"
