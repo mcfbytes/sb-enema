@@ -83,9 +83,6 @@ jobs:
         run: |
           make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
 
-      - name: Generate Buildroot legal info
-        run: make legal-info
-
       - name: Run Trivy rootfs scan
         uses: aquasecurity/trivy-action@0.34.2
         with:
@@ -107,10 +104,7 @@ jobs:
           cp output/br-out/images/sb-enema.img dist/
           cp docs/release-README.md dist/README.md
           cp trivy-rootfs.sarif dist/
-          tar -czf dist/legal-info.tar.gz -C output/br-out legal-info
           (cd dist && sha256sum sb-enema.img > SHA256SUMS)
-          # Remaining dist files (README, trivy, legal-info) are not checksummed separately
-          # as they are informational; the attested .img is the primary release artifact.
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0.23.0
@@ -135,4 +129,3 @@ jobs:
             dist/SHA256SUMS
             dist/sbom.cdx.json
             dist/trivy-rootfs.sarif
-            dist/legal-info.tar.gz
