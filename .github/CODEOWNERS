@@ -1,0 +1,20 @@
+# CODEOWNERS
+#
+# Reviewed and maintained with extensive assistance from GitHub Copilot and
+# generative AI. All owners are expected to review security-sensitive changes
+# with extra care.
+#
+# Syntax: <pattern> <owner> [<owner> ...]
+# Patterns are matched in order; last match wins.
+
+# Catch-all — every file not matched below
+*                                                                      @mcfbytes
+
+# Runtime Secure Boot logic (most security-sensitive)
+/sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/             @mcfbytes
+
+# Build-time key and payload generation
+/scripts/                                                              @mcfbytes
+
+# CI/CD pipeline integrity
+/.github/workflows/                                                    @mcfbytes

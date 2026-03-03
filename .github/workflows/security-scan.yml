@@ -1,0 +1,84 @@
+name: security-scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libncurses5-dev libelf-dev \
+            rsync cpio unzip wget xz-utils file python3-venv curl git \
+            pkg-config libffi-dev mtools
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Extract Buildroot version
+        run: echo "BUILDROOT_VERSION=$(grep '^BUILDROOT_VERSION' Makefile | cut -d= -f2 | xargs)" >> $GITHUB_ENV
+
+      - name: Cache Buildroot tarball
+        uses: actions/cache@v5
+        with:
+          path: output/buildroot-*.tar.gz
+          key: br-tarball-${{ env.BUILDROOT_VERSION }}
+
+      - name: Cache Buildroot DL dir
+        uses: actions/cache@v5
+        with:
+          path: output/dl
+          key: br-dl-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig') }}
+          restore-keys: br-dl-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Cache Buildroot host toolchain
+        uses: actions/cache@v5
+        with:
+          path: |
+            output/br-out/host
+            output/br-out/build/host-*/.stamp_*
+          key: br-host-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig', 'sb_enema/patches/**') }}
+          restore-keys: |
+            br-host-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-
+            br-host-${{ runner.os }}-
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 4G
+
+      - name: Build images
+        run: |
+          make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
+
+      - name: Run Trivy rootfs scan
+        uses: aquasecurity/trivy-action@v0.34.2
+        with:
+          scan-type: fs
+          scan-ref: output/br-out/target
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-rootfs.sarif
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-rootfs.sarif
+          category: trivy-rootfs

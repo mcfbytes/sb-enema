@@ -1,0 +1,82 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libncurses5-dev libelf-dev \
+            rsync cpio unzip wget xz-utils file python3-venv curl git \
+            pkg-config libffi-dev mtools
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Extract Buildroot version
+        run: echo "BUILDROOT_VERSION=$(grep '^BUILDROOT_VERSION' Makefile | cut -d= -f2 | xargs)" >> $GITHUB_ENV
+
+      - name: Cache Buildroot tarball
+        uses: actions/cache@v5
+        with:
+          path: output/buildroot-*.tar.gz
+          key: br-tarball-${{ env.BUILDROOT_VERSION }}
+
+      - name: Cache Buildroot DL dir
+        uses: actions/cache@v5
+        with:
+          path: output/dl
+          key: br-dl-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig') }}
+          restore-keys: br-dl-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Cache Buildroot host toolchain
+        uses: actions/cache@v5
+        with:
+          path: |
+            output/br-out/host
+            output/br-out/build/host-*/.stamp_*
+          key: br-host-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig', 'sb_enema/patches/**') }}
+          restore-keys: |
+            br-host-${{ runner.os }}-${{ env.BUILDROOT_VERSION }}-
+            br-host-${{ runner.os }}-
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 4G
+
+      - name: Build images
+        run: |
+          make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sb-enema-image
+          path: output/br-out/images/sb-enema.img
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,6 @@
+output/
+dist/
+*.img
+*.log
+*.sha256
+tmpclaude-*
