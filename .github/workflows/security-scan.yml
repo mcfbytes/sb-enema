@@ -83,14 +83,17 @@ jobs:
           sarif_file: trivy-rootfs.sarif
           category: trivy-rootfs
 
+      - name: Create SBOM output dir
+        run: mkdir -p ${{ github.workspace }}/sbom
+      
       - name: Generate SBOM
         uses: anchore/sbom-action@v0.23.0
         with:
           path: output/br-out/target/
           format: spdx-json
-          output-file: "${{ github.workspace }}/sbom.spdx.json"
+          output-file: "${{ github.workspace }}/sbom/sbom.spdx.json"
 
-      - name: SBOM upload 
+      - name: SBOM upload
         uses: advanced-security/spdx-dependency-submission-action@v0.2.0
         with:
-          filePath: "${{ github.workspace }}/sbom.spdx.json"
+          filePath: "${{ github.workspace }}/sbom/"
