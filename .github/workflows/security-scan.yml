@@ -88,9 +88,9 @@ jobs:
         with:
           path: output/br-out/target/
           format: spdx-json
-          output-file: $GITHUB_WORKSPACE/sbom.spdx.json
+          output-file: "${{ github.workspace }}/sbom.spdx.json"
 
       - name: SBOM upload 
         uses: advanced-security/spdx-dependency-submission-action@v0.2.0
         with:
-          filePath: "$GITHUB_WORKSPACE/sbom.spdx.json"
+          filePath: "${{ github.workspace }}/sbom.spdx.json"
