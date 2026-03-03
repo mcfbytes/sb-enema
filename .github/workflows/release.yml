@@ -120,10 +120,9 @@ jobs:
             dist/sb-enema.img
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v6
+        uses: softprops/action-gh-release@v2
         with:
-          name: sb-enema-${{ env.VERSION }}
-          path: |
+          files: |
             dist/sb-enema.img
             dist/README.md
             dist/SHA256SUMS
