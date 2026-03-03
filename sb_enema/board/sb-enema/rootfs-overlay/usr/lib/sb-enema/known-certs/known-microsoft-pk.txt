@@ -1,0 +1,11 @@
+# known-microsoft-pk.txt — SHA-256 fingerprint of the known Microsoft Platform Key.
+# Format: <sha256_lowercase_hex> <description>
+# Source: microsoft/secureboot_objects PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der
+# Use: grep -qF "<sha256>" known-microsoft-pk.txt
+#
+# Microsoft ships a PK on Surface devices and OEM devices enrolled in the Windows
+# Hardware Compatibility Program (WHCP). This is not typical for most consumer
+# hardware, where the OEM generates their own PK.
+
+# Windows OEM Devices PK (Surface devices and WHCP-enrolled systems)
+2f569e8edaf9657dc4951c29598725255c7f821472db71374211fe44d082546f Windows OEM Devices PK

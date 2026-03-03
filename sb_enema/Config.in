@@ -1,0 +1,6 @@
+menu "SB-ENEMA external options"
+
+source "$BR2_EXTERNAL_SB_ENEMA_PATH/package/efitools/Config.in"
+source "$BR2_EXTERNAL_SB_ENEMA_PATH/package/sbsigntools/Config.in"
+
+endmenu

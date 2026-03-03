@@ -1,0 +1,9 @@
+config BR2_PACKAGE_EFITOOLS
+	bool "efitools"
+	depends on BR2_PACKAGE_OPENSSL
+	depends on BR2_PACKAGE_GNU_EFI
+	help
+	  UEFI secure boot tooling (efi-updatevar, efi-readvar,
+	  cert-to-efi-sig-list, sign-efi-sig-list, hash-to-efi-sig-list).
+
+	  https://git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git

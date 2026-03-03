@@ -1,0 +1,25 @@
+Replace the unconditional #include <bfd.h> with minimal inline type
+stubs.  bfd.h (from binutils-dev) is not present in the cross-
+compilation staging sysroot, and sbsigntools never calls any bfd_*
+functions -- the only things needed from bfd.h are the bfd_vma and
+bfd_byte typedefs and the ATTRIBUTE_PACKED macro used by the bundled
+coff/pe.h and coff/external.h structures.
+
+--- a/src/image.h
++++ b/src/image.h
+@@ -34,7 +34,13 @@
+ 
+ #include <stdint.h>
+ 
+-#include <bfd.h>
++/* Minimal bfd type stubs for coff/pe.h; system bfd.h is not available
++ * in cross-compilation without binutils-dev headers in staging. */
++typedef uint64_t bfd_vma;
++typedef unsigned char bfd_byte;
++#ifndef ATTRIBUTE_PACKED
++# define ATTRIBUTE_PACKED __attribute__((packed))
++#endif
+ #define DO_NOT_DEFINE_LINENO
+ 
+ #include "coff/external.h"
+

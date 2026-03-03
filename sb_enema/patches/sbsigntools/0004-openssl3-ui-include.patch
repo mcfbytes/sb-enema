@@ -1,0 +1,15 @@
+OpenSSL 3.0 no longer pulls <openssl/ui.h> transitively from
+<openssl/engine.h>, so UI_STRING and the UI_* function prototypes are
+not visible unless the header is included explicitly.
+
+--- a/src/fileio.c
++++ b/src/fileio.c
+@@ -40,6 +40,7 @@
+ #include <openssl/pem.h>
+ #include <openssl/err.h>
+ #include <openssl/engine.h>
++#include <openssl/ui.h>
+ 
+ #include <ccan/talloc/talloc.h>
+ #include <ccan/read_write_all/read_write_all.h>
+

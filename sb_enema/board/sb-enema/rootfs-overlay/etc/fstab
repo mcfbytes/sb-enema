@@ -1,0 +1,9 @@
+# /etc/fstab — SB-ENEMA root filesystem mount table
+#
+# The data partition is identified by its FAT volume serial (UUID BEEF-CAFE),
+# set deterministically at build time via `mformat -N BEEFCAFE`.  Using UUID
+# is more reliable than label or partition-type scanning because the UUID
+# survives renames and is independent of device enumeration order.
+#
+# <file system>     <mount pt>  <type>  <options>           <dump>  <pass>
+UUID=BEEF-CAFE      /mnt/data   auto    defaults,noatime    0       0

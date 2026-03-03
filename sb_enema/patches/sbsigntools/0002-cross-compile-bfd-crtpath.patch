@@ -1,0 +1,48 @@
+Skip the bfd.h header check and CRTPATH search when cross-compiling, since
+sbsigntools bundles its own coff/ headers and the gnu-efi CRT objects live
+in the Buildroot staging sysroot rather than standard host paths.
+
+An EFI_CRT_PATH environment variable is honoured to override CRTPATH
+detection explicitly (used by the Buildroot .mk to point at staging).
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -17,9 +17,11 @@
+ AC_CHECK_TOOL(OBJCOPY, [objcopy])
+ AC_CHECK_TOOL(STRIP, [strip])
+ 
++if test "$cross_compiling" = no; then
+  AC_CHECK_HEADER([bfd.h], [],
+   AC_MSG_ERROR([bfd.h not found.]
+ [bfd.h is usually distributed in a binutils development package.]))
++fi
+ 
+ if test $cross_compiling = no; then
+   AM_MISSING_PROG(HELP2MAN, help2man)
+@@ -70,14 +72,18 @@
+ EFI_ARCH=$(uname -m | sed 's/i.86/ia32/;s/arm.*/arm/')
+ AM_CONDITIONAL(TEST_BINARY_FORMAT, [ test "$EFI_ARCH" = "arm" -o "$EFI_ARCH" = "aarch64" -o "$EFI_ARCH" = riscv64 ])
+ 
+-##
+-# no consistent view of where gnu-efi should dump the efi stuff, so find it
+-##
+-for path in /lib /lib64 /usr/lib /usr/lib64 /usr/lib32 /lib/efi /lib64/efi /usr/lib/efi /usr/lib64/efi /usr/lib/gnuefi /usr/lib64/gnuefi ; do
+-    if test -e $path/crt0-efi-$EFI_ARCH.o; then
+-       CRTPATH=$path
+-    fi
+-done
++if test -n "$EFI_CRT_PATH"; then
++   CRTPATH="$EFI_CRT_PATH"
++else
++  ##
++  # no consistent view of where gnu-efi should dump the efi stuff, so find it
++  ##
++  for path in /lib /lib64 /usr/lib /usr/lib64 /usr/lib32 /lib/efi /lib64/efi /usr/lib/efi /usr/lib64/efi /usr/lib/gnuefi /usr/lib64/gnuefi ; do
++      if test -e $path/crt0-efi-$EFI_ARCH.o; then
++         CRTPATH=$path
++      fi
++  done
++fi
+ if test -z "$CRTPATH"; then
+    AC_MSG_ERROR([cannot find the gnu-efi crt path])
+ fi

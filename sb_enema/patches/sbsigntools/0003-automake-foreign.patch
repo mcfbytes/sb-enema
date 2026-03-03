@@ -1,0 +1,14 @@
+Use automake's "foreign" mode to avoid requiring GNU standard files
+(AUTHORS, ChangeLog, INSTALL, NEWS, README) that sbsigntools does not
+ship.  Without this option, autoreconf fails when automake runs in the
+default "gnu" strictness mode.
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -1,6 +1,6 @@
+ AC_INIT([sbsigntool], [0.9.5], [James.Bottomley@HansenPartnership.com])
+ 
+-AM_INIT_AUTOMAKE()
++AM_INIT_AUTOMAKE([foreign])
+ 
+ AC_PREREQ(2.60)

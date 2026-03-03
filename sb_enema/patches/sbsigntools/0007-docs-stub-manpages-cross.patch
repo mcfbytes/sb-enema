@@ -1,0 +1,18 @@
+When cross-compiling, configure.ac sets HELP2MAN=: (the shell no-op),
+so the man page generation rule silently produces no output.  The
+install step then fails with "cannot stat './sbsign.1': No such file
+or directory" because man1_MANS lists the .1 files unconditionally.
+
+Add a fallback `touch $@` after the HELP2MAN invocation so that a
+stub file is always created when HELP2MAN does not produce one.  This
+lets `make install` succeed during cross-compilation.
+
+--- a/docs/Makefile.am
++++ b/docs/Makefile.am
+@@ -8,5 +8,6 @@
+ 
+ $(builddir)/%.1: $(srcdir)/%.1.in $(top_builddir)/src/%
+ 	$(MKDIR_P) $(@D)
+-	$(HELP2MAN) --no-info -i $< -o $@ $(top_builddir)/src/$*
++	$(HELP2MAN) --no-info -i $< -o $@ $(top_builddir)/src/$*; \
++		test -f $@ || touch $@

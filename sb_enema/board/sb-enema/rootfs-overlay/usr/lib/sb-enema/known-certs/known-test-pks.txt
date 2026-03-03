@@ -1,0 +1,41 @@
+# known-test-pks.txt — SHA-256 fingerprints of known test/placeholder Platform Keys.
+# Format: <sha256_lowercase_hex> <description>
+# Source: microsoft/secureboot_objects PostSignedObjects/KEK/ (signing PK extracted from KEK update binaries)
+# Use: grep -qF "<sha256>" known-test-pks.txt
+#
+# WARNING: If your system's PK matches any entry in this file, Secure Boot is
+# NOT providing real security. The private key for these certificates is either
+# publicly known, widely distributed among OEMs, or was never meant for production.
+# You should replace the PK with one you generated yourself before trusting
+# this system's Secure Boot chain.
+
+# --- AMI test PKs ---
+# "DO NOT TRUST" AMI firmware test PKs shipped by AMI and adopted by various OEM/ODMs.
+# The AMI BIOS SDK ships these as placeholder keys for firmware development; they
+# are sometimes accidentally left in production firmware images.
+cca4e3f3170230030dc3e33d1e3fa7d1383de8b3367430892e93cbccde034ce0 DO NOT TRUST - AMI Test PK (variant 1, used by AMI)
+617f9a3582de92b19a14bf45cd7041950f365b1e49bac2633fd02bb106902c8d DO NOT TRUST - AMI Test PK (variant 2, used by AMI)
+01adaf2c334e76a6479516daf618381898323d8f5e7a57bed12bad7ab229209d DO NOT TRUST - AMI Test PK (variant 3, used by AMI/ASUS)
+d7ddc0ac61513b51601e76673826cd44187b5ff85f6c29eacdf8d1e37c52388a DO NOT TRUST - AMI Test PK (variant 4, used by AMI)
+
+# --- ASUS test PK ---
+# Generic "DO NOT TRUST" OEM PK shipped by ASUS in some firmware images.
+282d2857ee8f28ce622c803cab5031edda9412f08fa3192208344da0c6a42a6e DO NOT TRUST - OEM PK (ASUS)
+
+# --- TONGFANG test PKs ---
+# Test PKs found in TONGFANG ODM firmware (used by various white-label laptop brands).
+fe66f36a8c1a0da41bd2665d2f03cfc3f015975b690c90290297815639d69f0b DO NOT TRUST - Test PK (TONGFANG variant 1)
+2345ab8c4c53797c8205661117d653fc30c144ceaa5561fb7812065c9f1f58ba OEM1 Test Certificate (TONGFANG variant 2)
+
+# --- Clevo test PKs ---
+# Generic "Test Certificate" PKs found in Clevo barebones laptop firmware.
+f1608cb68168eeb07ae7c568308351d8183018355ebd1c79961323e40afbf5b0 Test Certificate (Clevo variant 1)
+863bfed7d73652c20adadbaaa7a1ddb89de8b1cd96e804af0a5e8162521f8ce2 Test Certificate (Clevo variant 2)
+
+# --- Epson test PK ---
+# Generic "Test Certificate" PK found in Epson firmware images.
+15dd51ef7e825ef358195b550f33f562cb39e9434703abc2a374c11dad3924bf Test Certificate (Epson)
+
+# --- Aava Mobile test PK ---
+# "UEFI PK Aava test" — development test key from Aava Mobile Oy.
+40609809370258fe3c01aeb13a4496d0927457163fc21ed84c0caa3dede853f1 UEFI PK Aava test (Aava Mobile Oy)

@@ -1,0 +1,50 @@
+#!/bin/sh
+# S20data-mount — Mount the SB-ENEMA FAT32 data partition early in boot.
+#
+# This script runs before S40sb-enema so that /mnt/data is available to
+# any service that needs it.  The mount is driven by /etc/fstab where the
+# partition is identified by UUID=BEEF-CAFE (FAT filesystem UUID derived
+# from volume serial 0xBEEFCAFE, assigned at image build time via
+# `mformat -N BEEFCAFE`).
+
+case "$1" in
+    start)
+        echo "Mounting SB-ENEMA data partition"
+        if mountpoint -q /mnt/data 2>/dev/null; then
+            echo "/mnt/data already mounted"
+        else
+            # USB devices may take several seconds to be enumerated by the kernel.
+            # Read the UUID to probe from the /mnt/data fstab entry so there is
+            # a single source of truth; fall back to BEEF-CAFE if not parseable.
+            # Poll blkid until the partition is visible or the timeout
+            # (MOUNT_WAIT_TIMEOUT, default 15s) expires, then attempt the mount.
+            fstab_uuid=$(awk -F'[[:space:]]+' '$2=="/mnt/data" && $1~/^UUID=/{sub(/^UUID=/,"",$1); print $1}' /etc/fstab)
+            if [ -z "${fstab_uuid}" ]; then
+                echo "Warning: could not parse UUID for /mnt/data from /etc/fstab; falling back to BEEF-CAFE"
+            fi
+            probe_uuid="${fstab_uuid:-BEEF-CAFE}"
+            timeout="${MOUNT_WAIT_TIMEOUT:-15}"
+            waited=0
+            while [ "${waited}" -lt "${timeout}" ]; do
+                blkid -t "UUID=${probe_uuid}" -o device >/dev/null 2>&1 && break
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if [ "${waited}" -ge "${timeout}" ]; then
+                echo "Warning: data partition not visible after ${timeout}s; attempting mount anyway"
+            fi
+            mount /mnt/data || echo "Warning: Could not mount /mnt/data (check dmesg)"
+        fi
+        ;;
+    stop)
+        if umount /mnt/data 2>/dev/null; then
+            echo "Unmounted /mnt/data"
+        else
+            echo "Warning: Could not unmount /mnt/data (busy or not mounted)"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,16 @@
+# known-microsoft-keks.txt — SHA-256 fingerprints of known Microsoft KEK certificates.
+# Format: <sha256_lowercase_hex> <description>
+# Source: microsoft/secureboot_objects PreSignedObjects/KEK/Certificates/
+# Use: grep -qF "<sha256>" known-microsoft-keks.txt
+#
+# These certificates are used by Microsoft to authorize updates to the db/dbx
+# Secure Boot signature databases. Systems following the Windows UEFI requirements
+# will have one or more of these in their KEK database.
+
+# Microsoft Corporation KEK CA 2011
+# Valid until: 2026-06-24 (expiring — see KB5037036)
+a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503 Microsoft Corporation KEK CA 2011
+
+# Microsoft Corporation KEK 2K CA 2023
+# Replacement for the 2011 KEK; uses 2048-bit RSA key
+3cd3f0309edae228767a976dd40d9f4affc4fbd5218f2e8cc3c9dd97e8ac6f9d Microsoft Corporation KEK 2K CA 2023

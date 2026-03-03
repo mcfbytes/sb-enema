@@ -1,0 +1,9 @@
+config BR2_PACKAGE_SBSIGNTOOLS
+	bool "sbsigntools"
+	depends on BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_UTIL_LINUX_LIBUUID
+	help
+	  Utilities for signing and verifying files for UEFI Secure Boot
+	  (sbsign, sbverify, sbattach, sbdetach).
+
+	  https://git.kernel.org/cgit/linux/kernel/git/jejb/sbsigntools.git/

@@ -1,0 +1,86 @@
+--- a/lib/kernel_efivars.c
++++ b/lib/kernel_efivars.c
+@@ -11,7 +11,6 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
+-#include <sys/wait.h>
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <time.h>
+@@ -28,54 +27,33 @@
+ void
+ kernel_variable_init(void)
+ {
+-	char fname[] = "/tmp/efi.XXXXXX";
+-	char cmdline[256];
+-	int fd, ret;
+-	struct stat st;
+-	char *buf;
++	FILE *fp;
++	char device[512], path[512], type[512], options[512];
++	int dump, pass;
+ 
+ 	if (kernel_efi_path)
+ 		return;
+-	mktemp(fname);
+-	snprintf(cmdline, sizeof(cmdline), "mount -l > %s", fname);
+-	ret = system(cmdline);
+-	if (WEXITSTATUS(ret) != 0)
+-		/* hopefully stderr said what was wrong */
+-		exit(1);
+-	fd = open(fname, O_RDONLY);
+-	unlink(fname);
+-	if (fd < 0) {
+-		fprintf(stderr, "Failed to open output of %s\n", cmdline);
+-		exit(1);
+-	}
+-	if (fstat(fd, &st) < 0) {
+-		perror("stat failed");
+-		exit(1);
+-	}
+-	if (st.st_size == 0) {
+-		fprintf(stderr, "No efivarfs filesystem is mounted\n");
++
++	/* Read /proc/mounts directly to find the efivarfs mount point.
++	 * Avoids calling 'mount' which may not support -l on BusyBox systems. */
++	fp = fopen("/proc/mounts", "r");
++	if (!fp) {
++		perror("Failed to open /proc/mounts");
+ 		exit(1);
+ 	}
+-	buf = malloc(st.st_size);
+-	read(fd, buf, st.st_size);
+-	close(fd);
+-
+-	char *ptr = buf;
+-	char path[512], type[512];
+-	while (ptr < buf + st.st_size) {
+-		int count;
+-
+-		sscanf(ptr, "%*s on %s type %s %*[^\n]\n%n", path, type, &count);
+-		ptr += count;
+-		if (strcmp(type, "efivarfs") == 0)
+-			break;
+-	}
+-	if (strcmp(type, "efivarfs") != 0) {
+-		fprintf(stderr, "No efivarfs filesystem is mounted\n");
+-		exit(1);
++
++	while (fscanf(fp, "%511s %511s %511s %511s %d %d",
++		      device, path, type, options, &dump, &pass) == 6) {
++		if (strcmp(type, "efivarfs") == 0) {
++			kernel_efi_path = malloc(strlen(path) + 1);
++			strcpy(kernel_efi_path, path);
++			fclose(fp);
++			return;
++		}
+ 	}
+-	kernel_efi_path = malloc(strlen(path) + 1);
+-	strcpy(kernel_efi_path, path);
++	fclose(fp);
++	fprintf(stderr, "No efivarfs filesystem is mounted\n");
++	exit(1);
+ }
+ 
+ int

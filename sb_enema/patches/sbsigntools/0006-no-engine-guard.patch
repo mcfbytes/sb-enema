@@ -1,0 +1,47 @@
+Guard all ENGINE/UI API usage with #ifndef OPENSSL_NO_ENGINE.
+
+OpenSSL 3.x with Buildroot may be built with no-engine (--no-engine
+configure option), which causes OPENSSL_NO_ENGINE to be defined in
+opensslconf.h and ENGINE_* symbols to be completely absent from the
+headers.  Wrap the engine.h / ui.h includes, the ui_read() helper,
+and fileio_read_engine_key() with #ifndef OPENSSL_NO_ENGINE.  Provide
+a stub implementation that returns NULL with an informative error
+message when engine support is unavailable.
+
+--- a/src/fileio.c
++++ b/src/fileio.c
+@@ -39,8 +39,10 @@
+ #include <openssl/bio.h>
+ #include <openssl/pem.h>
+ #include <openssl/err.h>
++#ifndef OPENSSL_NO_ENGINE
+ #include <openssl/engine.h>
+ #include <openssl/ui.h>
++#endif /* OPENSSL_NO_ENGINE */
+ 
+ #include <ccan/talloc/talloc.h>
+ #include <ccan/read_write_all/read_write_all.h>
+@@ -51,6 +53,7 @@
+ 
+ #define FLAG_NOERROR	(1<<0)
+ 
++#ifndef OPENSSL_NO_ENGINE
+ static int ui_read(UI *ui, UI_STRING *uis)
+ {
+ 	char password[128];
+@@ -100,6 +103,15 @@
+ 	ENGINE_free(e);
+ 	return pkey;
+ }
++#else /* OPENSSL_NO_ENGINE */
++EVP_PKEY *fileio_read_engine_key(const char *engine, const char *filename)
++{
++	(void)engine;
++	(void)filename;
++	fprintf(stderr, "Engine key loading not supported (OpenSSL built without engine support)\n");
++	return NULL;
++}
++#endif /* OPENSSL_NO_ENGINE */
+ 
+ EVP_PKEY *fileio_read_pkey(const char *filename)
+ {
