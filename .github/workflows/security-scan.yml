@@ -9,6 +9,7 @@ permissions:
   actions: read
   contents: write
   security-events: write
+  id-token: write
 
 jobs:
   scan:
@@ -95,5 +96,6 @@ jobs:
 
       - name: SBOM upload
         uses: advanced-security/spdx-dependency-submission-action@v0.2.0
+
         with:
           filePath: "${{ github.workspace }}/sbom/"
