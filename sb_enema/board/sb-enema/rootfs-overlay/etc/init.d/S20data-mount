@@ -33,7 +33,16 @@ case "$1" in
             if [ "${waited}" -ge "${timeout}" ]; then
                 echo "Warning: data partition not visible after ${timeout}s; attempting mount anyway"
             fi
-            mount /mnt/data || echo "Warning: Could not mount /mnt/data (check dmesg)"
+            # Resolve the device node explicitly so we mount by path rather than
+            # going through BusyBox's UUID resolver (which needs /dev/disk/by-uuid/
+            # symlinks that mdev does not create).
+            dev_node=$(blkid -t "UUID=${probe_uuid}" -o device 2>/dev/null || true)
+            if [ -n "${dev_node}" ]; then
+                mount -t vfat -o defaults,noatime "${dev_node}" /mnt/data \
+                    || echo "Warning: Could not mount /mnt/data (check dmesg)"
+            else
+                echo "Warning: Could not resolve UUID=${probe_uuid} to a device node"
+            fi
         fi
         ;;
     stop)

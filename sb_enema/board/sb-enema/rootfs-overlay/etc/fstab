@@ -5,5 +5,8 @@
 # is more reliable than label or partition-type scanning because the UUID
 # survives renames and is independent of device enumeration order.
 #
-# <file system>     <mount pt>  <type>  <options>           <dump>  <pass>
-UUID=BEEF-CAFE      /mnt/data   auto    defaults,noatime    0       0
+# <file system>     <mount pt>  <type>  <options>                   <dump>  <pass>
+# noauto: S20data-mount owns this mount; prevents mount -a (called by rcS
+# before the device is enumerated) from generating spurious
+# "Can't lookup blockdev" errors via BusyBox's UUID resolver.
+UUID=BEEF-CAFE      /mnt/data   auto    defaults,noatime,noauto    0       0
