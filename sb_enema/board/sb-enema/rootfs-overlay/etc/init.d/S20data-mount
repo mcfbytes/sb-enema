@@ -1,11 +1,5 @@
 #!/bin/sh
 # S20data-mount — Mount the SB-ENEMA FAT32 data partition early in boot.
-#
-# This script runs before S40sb-enema so that /mnt/data is available to
-# any service that needs it.  The mount is driven by /etc/fstab where the
-# partition is identified by UUID=BEEF-CAFE (FAT filesystem UUID derived
-# from volume serial 0xBEEFCAFE, assigned at image build time via
-# `mformat -N BEEFCAFE`).
 
 case "$1" in
     start)
@@ -13,35 +7,28 @@ case "$1" in
         if mountpoint -q /mnt/data 2>/dev/null; then
             echo "/mnt/data already mounted"
         else
-            # USB devices may take several seconds to be enumerated by the kernel.
-            # Read the UUID to probe from the /mnt/data fstab entry so there is
-            # a single source of truth; fall back to BEEF-CAFE if not parseable.
-            # Poll blkid until the partition is visible or the timeout
-            # (MOUNT_WAIT_TIMEOUT, default 15s) expires, then attempt the mount.
-            fstab_uuid=$(awk -F'[[:space:]]+' '$2=="/mnt/data" && $1~/^UUID=/{sub(/^UUID=/,"",$1); print $1}' /etc/fstab)
-            if [ -z "${fstab_uuid}" ]; then
-                echo "Warning: could not parse UUID for /mnt/data from /etc/fstab; falling back to BEEF-CAFE"
-            fi
-            probe_uuid="${fstab_uuid:-BEEF-CAFE}"
             timeout="${MOUNT_WAIT_TIMEOUT:-15}"
+
+            # Replay cold-plug events so mdev.conf rules fire for any block
+            # devices that appeared before the mdev daemon started.  The actual
+            # mount is handled by /lib/mdev/mount-data.sh via the mdev.conf
+            # rules — we just need to trigger it and then wait for it to finish.
+            mdev -s 2>/dev/null || true
+
+            # mdev event processing is asynchronous; block here until
+            # /mnt/data is mounted or the timeout expires so that later init
+            # scripts (S40sb-enema, etc.) always see the partition ready.
             waited=0
             while [ "${waited}" -lt "${timeout}" ]; do
-                blkid -t "UUID=${probe_uuid}" -o device >/dev/null 2>&1 && break
+                mountpoint -q /mnt/data 2>/dev/null && break
                 sleep 1
                 waited=$((waited + 1))
             done
-            if [ "${waited}" -ge "${timeout}" ]; then
-                echo "Warning: data partition not visible after ${timeout}s; attempting mount anyway"
-            fi
-            # Resolve the device node explicitly so we mount by path rather than
-            # going through BusyBox's UUID resolver (which needs /dev/disk/by-uuid/
-            # symlinks that mdev does not create).
-            dev_node=$(blkid -t "UUID=${probe_uuid}" -o device 2>/dev/null || true)
-            if [ -n "${dev_node}" ]; then
-                mount -t vfat -o defaults,noatime "${dev_node}" /mnt/data \
-                    || echo "Warning: Could not mount /mnt/data (check dmesg)"
+
+            if mountpoint -q /mnt/data 2>/dev/null; then
+                echo "/mnt/data mounted"
             else
-                echo "Warning: Could not resolve UUID=${probe_uuid} to a device node"
+                echo "Warning: /mnt/data not mounted after ${timeout}s (check dmesg)"
             fi
         fi
         ;;

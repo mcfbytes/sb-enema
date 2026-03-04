@@ -108,12 +108,27 @@ keygen_generate_keys() {
     log_info "Generating custom owner keys"
     mkdir -p "${KEYS_DIR}"
 
+    # Type 1 — System Information: used for PK (platform owner) and DB (boot scope)
+    local sys_vendor product_name product_family
+    sys_vendor=$(_report_dmi_field /sys/class/dmi/id/sys_vendor)
+    product_name=$(_report_dmi_field /sys/class/dmi/id/product_name)
+    product_family=$(_report_dmi_field /sys/class/dmi/id/product_family)
+
+    [[ -z "${sys_vendor}"     || "${sys_vendor}"     == "(unknown)" ]] && sys_vendor="Unknown Vendor"
+    [[ -z "${product_name}"   || "${product_name}"   == "(unknown)" ]] && product_name="Unknown Product"
+    [[ -z "${product_family}" || "${product_family}" == "(unknown)" ]] && product_family="${product_name}"
+
+    sys_vendor=$(_keygen_sanitize_dn_field "${sys_vendor}")
+    product_name=$(_keygen_sanitize_dn_field "${product_name}")
+    product_family=$(_keygen_sanitize_dn_field "${product_family}")
+
+    # Type 2 — Base Board Information: used for KEK (firmware/board identity)
     local board_vendor board_name
     board_vendor=$(_report_dmi_field /sys/class/dmi/id/board_vendor)
     board_name=$(_report_dmi_field /sys/class/dmi/id/board_name)
 
     [[ -z "${board_vendor}" || "${board_vendor}" == "(unknown)" ]] && board_vendor="Unknown Vendor"
-    [[ -z "${board_name}" || "${board_name}" == "(unknown)" ]] && board_name="Unknown Board"
+    [[ -z "${board_name}"   || "${board_name}"   == "(unknown)" ]] && board_name="Unknown Board"
 
     board_vendor=$(_keygen_sanitize_dn_field "${board_vendor}")
     board_name=$(_keygen_sanitize_dn_field "${board_name}")
@@ -121,7 +136,8 @@ keygen_generate_keys() {
     local cn_prefix
     cn_prefix=$(_keygen_sanitize_dn_field "${CERT_CN_PREFIX}")
 
-    local pk_subject="/CN=${cn_prefix} Platform Key/O=${board_vendor}/OU=${board_name}"
+    # PK: system-level owner identity (Type 1 — sys_vendor / product_name)
+    local pk_subject="/CN=${cn_prefix} Platform Key/O=${sys_vendor}/OU=${product_name}"
     local pk_key="${KEYS_DIR}/PK.key"
     local pk_crt="${KEYS_DIR}/PK.crt"
 
@@ -143,6 +159,7 @@ keygen_generate_keys() {
     mkdir -p "${DATA_MOUNT}/PK"
     cp "${pk_crt}" "${DATA_MOUNT}/PK/PK.crt"
 
+    # KEK: board/firmware identity (Type 2 — board_vendor / board_name)
     local kek_subject="/CN=${cn_prefix} Key Exchange Key/O=${board_vendor}/OU=${board_name}"
     local kek_key="${KEYS_DIR}/KEK.key"
     local kek_crt="${KEYS_DIR}/KEK.crt"
@@ -165,7 +182,8 @@ keygen_generate_keys() {
     mkdir -p "${DATA_MOUNT}/KEK"
     cp "${kek_crt}" "${DATA_MOUNT}/KEK/KEK.crt"
 
-    local db_subject="/CN=${cn_prefix} Allowed DB/O=${board_vendor}/OU=${board_name}"
+    # DB: boot-target scope (Type 1 — sys_vendor / product_family)
+    local db_subject="/CN=${cn_prefix} Allowed DB/O=${sys_vendor}/OU=${product_family}"
     local db_key="${KEYS_DIR}/DB.key"
     local db_crt="${KEYS_DIR}/DB.crt"
 

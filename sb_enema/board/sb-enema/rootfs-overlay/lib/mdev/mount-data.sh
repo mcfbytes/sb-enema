@@ -6,7 +6,8 @@
 #   ACTION — "add" or "remove"
 #
 # Only acts on the SB-ENEMA data partition, identified by FAT volume UUID
-# BEEF-CAFE (serial 0xBEEFCAFE, set at build time via `mformat -N BEEFCAFE`).
+# BEEF-CAFE (volume serial 0xBEEFCAFE, set at build time via mkfs.fat -i BEEFCAFE).
+# BusyBox blkid does not support -s/-o flags; its output is parsed with grep/cut.
 
 set -euo pipefail
 
@@ -16,9 +17,20 @@ DEV="/dev/${MDEV}"
 
 case "${ACTION}" in
     add)
-        # Read the UUID of the newly appeared device.  blkid exits non-zero if
-        # the device has no recognisable filesystem — ignore that silently.
-        dev_uuid=$(blkid -s UUID -o value "${DEV}" 2>/dev/null || true)
+        # Read the UUID of the newly appeared device.  Retry up to 3 times with
+        # a short delay: blkid can return empty output if called the instant the
+        # device node appears, before the kernel finishes reading the partition.
+        # blkid exits non-zero if the device has no recognisable filesystem —
+        # ignore that silently.
+        dev_uuid=""
+        for attempt in 1 2 3; do
+            # BusyBox blkid takes no flags; output is: /dev/sdX: KEY="val" ...
+            # Extract the UUID field with grep/cut.
+            dev_uuid=$(blkid "${DEV}" 2>/dev/null \
+                | grep -o 'UUID="[^"]*"' | cut -d'"' -f2 || true)
+            [ -n "${dev_uuid}" ] && break
+            sleep 1
+        done
         if [ "${dev_uuid}" != "${DATA_UUID}" ]; then
             exit 0
         fi

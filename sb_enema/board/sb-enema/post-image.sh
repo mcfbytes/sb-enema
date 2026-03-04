@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Post-image script: prepare FAT32 data partition image (rootless) and final hybrid disk image.
 #
-# Uses mtools (mformat/mcopy) to populate the data partition directly on the image
-# file without loop-mounting, so this script runs in unprivileged CI containers
-# that lack CAP_SYS_ADMIN.  No sudo, no mount, no loop devices.
+# Uses mkfs.fat (dosfstools) to format the data partition image and mtools (mcopy)
+# to populate it, both operating directly on the image file without loop-mounting.
+# Runs in unprivileged CI containers that lack CAP_SYS_ADMIN.  No sudo, no mount,
+# no loop devices.  mkfs.fat is preferred over mformat because it produces a
+# standard FAT32 BPB that BusyBox blkid can parse to extract UUID and label.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -53,25 +55,33 @@ readonly STAGING_DIR="${SECUREBOOT_STAGING_DIR:-${BOARD_DIR}/../../../output/sec
 # rootless tooling compatibility but the file is consumed identically by genimage.
 readonly DATA_IMG="${BINARIES_DIR}/sb-enema-exfat.img"
 # DATA_SIZE / EXFAT_SIZE: DATA_SIZE takes precedence; EXFAT_SIZE kept for backwards compatibility.
-# Default is 32 MiB – enough for secureboot payloads, generated keys, and logs.
+# Default is 36 MiB.  Must be large enough that mkfs.fat -F 32 produces ≥ 65,525 data
+# clusters (the FAT spec boundary between FAT16 and FAT32).  At 32 MiB the cluster
+# count falls to ~64,496 — below the threshold — so BusyBox blkid misclassifies the
+# filesystem as FAT16 and reads the volume serial from the wrong BPB offset (0x27
+# instead of 0x43), returning an empty UUID and breaking automount.  36 MiB yields
+# ~72,544 clusters, comfortably above the threshold.
 # Override at build time: DATA_SIZE=128M make images
-readonly DATA_SIZE="${DATA_SIZE:-${EXFAT_SIZE:-32M}}"
+readonly DATA_SIZE="${DATA_SIZE:-${EXFAT_SIZE:-36M}}"
 
 readonly GENIMAGE_CFG="${BOARD_DIR}/genimage/genimage.cfg"
 readonly GENIMAGE_TMP="${BINARIES_DIR}/genimage.tmp"
 
 # ---------------------------------------------------------------------------
-# Build the data partition image with mtools – no mount, no sudo required
+# Build the data partition image – no mount, no sudo required
 # ---------------------------------------------------------------------------
 build_data_image() {
-    # Create a blank file and format it as FAT32.  mtools operates directly on
-    # the image file so no loop device or elevated privileges are needed.
+    # Create a blank file and format it as FAT32 using mkfs.fat (dosfstools).
+    # mkfs.fat writes a standard FAT32 BPB that BusyBox blkid can fully parse
+    # (UUID, label, type), unlike mformat which produces a BPB variant that
+    # BusyBox blkid only partially reads.  mcopy is still used for content.
+    #   -F 32  force FAT32 even for smaller images
+    #   -I     ignore "not a safe device" warning when formatting a plain file
+    #   -n     set the volume label
+    #   -i     set the volume serial (UUID exposed as BEEF-CAFE by blkid)
     rm -f "${DATA_IMG}"
     truncate -s "${DATA_SIZE}" "${DATA_IMG}"
-    # -F: force FAT32 even for smaller images; -v: set volume label; :: = root
-    # -N: set a deterministic volume serial so the partition always has UUID BEEF-CAFE.
-    #     This allows /etc/fstab and auto-mount to reference it by UUID.
-    mformat -i "${DATA_IMG}" -F -v "SB-ENEMA" -N BEEFCAFE ::
+    mkfs.fat -F 32 -I -n "SB-ENEMA" -i BEEFCAFE "${DATA_IMG}"
 
     # Copy seed files (DB, DBX, KEK, PK, README.txt, certs, logs, …) to root.
     local item
@@ -137,7 +147,7 @@ run_genimage() {
 main() {
     [[ -n "${BINARIES_DIR}" ]] || usage
 
-    require_tool mformat  "install mtools"
+    require_tool mkfs.fat "install dosfstools"
     require_tool mcopy    "install mtools"
     require_tool genimage "install genimage"
 

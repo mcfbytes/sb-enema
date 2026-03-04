@@ -106,23 +106,38 @@ _report_cert_icon() {
 
 # ---------------------------------------------------------------------------
 # report_header()
-#   Print the report header: system info, BIOS, board info, Secure Boot
-#   state, Setup Mode flag, and PK ownership model.
+#   Print the report header: host/date, all SMBIOS Type 0-3 fields, Secure
+#   Boot state, Setup Mode flag, and PK ownership model.
 # ---------------------------------------------------------------------------
 report_header() {
     local hostname date_str
     hostname=$(hostname 2>/dev/null) || hostname="(unknown)"
     date_str=$(date -u "+%Y-%m-%d %H:%M:%S UTC" 2>/dev/null) || date_str="(unknown)"
 
+    # Type 0 — BIOS Information
     local bios_vendor bios_version bios_date
     bios_vendor=$(_report_dmi_field /sys/class/dmi/id/bios_vendor)
     bios_version=$(_report_dmi_field /sys/class/dmi/id/bios_version)
     bios_date=$(_report_dmi_field /sys/class/dmi/id/bios_date)
 
+    # Type 1 — System Information
+    local sys_vendor product_name product_version product_family
+    sys_vendor=$(_report_dmi_field /sys/class/dmi/id/sys_vendor)
+    product_name=$(_report_dmi_field /sys/class/dmi/id/product_name)
+    product_version=$(_report_dmi_field /sys/class/dmi/id/product_version)
+    product_family=$(_report_dmi_field /sys/class/dmi/id/product_family)
+
+    # Type 2 — Base Board Information
     local board_vendor board_name board_version
     board_vendor=$(_report_dmi_field /sys/class/dmi/id/board_vendor)
     board_name=$(_report_dmi_field /sys/class/dmi/id/board_name)
     board_version=$(_report_dmi_field /sys/class/dmi/id/board_version)
+
+    # Type 3 — Chassis Information
+    local chassis_vendor chassis_type chassis_version
+    chassis_vendor=$(_report_dmi_field /sys/class/dmi/id/chassis_vendor)
+    chassis_type=$(_report_dmi_field /sys/class/dmi/id/chassis_type)
+    chassis_version=$(_report_dmi_field /sys/class/dmi/id/chassis_version)
 
     local sb_state setup_mode
     sb_state=$(efivar_get_secure_boot_state)
@@ -166,13 +181,26 @@ report_header() {
     _report_print "$(printf '  %-20s %s' "Host:"         "${hostname}")"
     _report_print "$(printf '  %-20s %s' "Date:"         "${date_str}")"
     _report_print ""
-    _report_print "$(printf '  %-20s %s' "BIOS Vendor:"  "${bios_vendor}")"
-    _report_print "$(printf '  %-20s %s' "BIOS Version:" "${bios_version}")"
-    _report_print "$(printf '  %-20s %s' "BIOS Date:"    "${bios_date}")"
+    _report_print "  ${BOLD}BIOS (Type 0)${RESET}"
+    _report_print "$(printf '  %-24s %s' "  BIOS Vendor:"    "${bios_vendor}")"
+    _report_print "$(printf '  %-24s %s' "  BIOS Version:"   "${bios_version}")"
+    _report_print "$(printf '  %-24s %s' "  BIOS Date:"      "${bios_date}")"
     _report_print ""
-    _report_print "$(printf '  %-20s %s' "Board Vendor:" "${board_vendor}")"
-    _report_print "$(printf '  %-20s %s' "Board Name:"   "${board_name}")"
-    _report_print "$(printf '  %-20s %s' "Board Version:" "${board_version}")"
+    _report_print "  ${BOLD}System (Type 1)${RESET}"
+    _report_print "$(printf '  %-24s %s' "  System Vendor:"  "${sys_vendor}")"
+    _report_print "$(printf '  %-24s %s' "  Product Name:"   "${product_name}")"
+    _report_print "$(printf '  %-24s %s' "  Product Version:" "${product_version}")"
+    _report_print "$(printf '  %-24s %s' "  Product Family:" "${product_family}")"
+    _report_print ""
+    _report_print "  ${BOLD}Base Board (Type 2)${RESET}"
+    _report_print "$(printf '  %-24s %s' "  Board Vendor:"   "${board_vendor}")"
+    _report_print "$(printf '  %-24s %s' "  Board Name:"     "${board_name}")"
+    _report_print "$(printf '  %-24s %s' "  Board Version:"  "${board_version}")"
+    _report_print ""
+    _report_print "  ${BOLD}Chassis (Type 3)${RESET}"
+    _report_print "$(printf '  %-24s %s' "  Chassis Vendor:"  "${chassis_vendor}")"
+    _report_print "$(printf '  %-24s %s' "  Chassis Type:"    "${chassis_type}")"
+    _report_print "$(printf '  %-24s %s' "  Chassis Version:" "${chassis_version}")"
     _report_print ""
     _report_print "  Secure Boot:         ${sb_str}"
     _report_print "  Setup Mode:          ${sm_str}"
