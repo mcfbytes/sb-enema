@@ -98,20 +98,24 @@ jobs:
           sarif_file: trivy-rootfs.sarif
           category: trivy-rootfs
 
+      - name: Create SBOM output dir
+        run: mkdir -p ${{ github.workspace }}/sbom
+      
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.23.0
+        with:
+          path: output/br-out/target/
+          format: spdx-json
+          output-file: "${{ github.workspace }}/sbom/sbom.spdx.json"
+
       - name: Stage artifacts
         run: |
           mkdir -p dist
           cp output/br-out/images/sb-enema.img dist/
           cp docs/release-README.md dist/README.md
           cp trivy-rootfs.sarif dist/
+          cp sbom/sbom.spdx.json dist/
           (cd dist && sha256sum sb-enema.img > SHA256SUMS)
-
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0.23.0
-        with:
-          path: output/br-out/target/
-          format: spdx-json
-          output-file: dist/sbom.spdx.json
 
       - name: Attest build provenance
         uses: actions/attest@v4
@@ -129,7 +133,7 @@ jobs:
             dist/sbom.spdx.json
             dist/trivy-rootfs.sarif
 
-      - name: SBOM upload 
+      - name: SBOM upload
         uses: advanced-security/spdx-dependency-submission-action@v0.2.0
         with:
-          filePath: "dist/sbom.spdx.json"
+          filePath: "${{ github.workspace }}/sbom/"
