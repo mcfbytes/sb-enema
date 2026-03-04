@@ -23,7 +23,7 @@ case "${ACTION}" in
         # blkid exits non-zero if the device has no recognisable filesystem —
         # ignore that silently.
         dev_uuid=""
-        for attempt in 1 2 3; do
+        for _attempt in 1 2 3; do
             # BusyBox blkid takes no flags; output is: /dev/sdX: KEY="val" ...
             # Extract the UUID field with grep/cut.
             dev_uuid=$(blkid "${DEV}" 2>/dev/null \
