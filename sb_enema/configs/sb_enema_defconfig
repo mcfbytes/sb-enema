@@ -17,38 +17,20 @@ BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="../../sb_enema/board/sb-enema/busybox
 # /dev management — use devtmpfs + mdev for initramfs/CPIO boot
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_MDEV=y
 
-# Networking and download tools
-BR2_PACKAGE_LIBCURL_CURL=y
-
-# Filesystem tooling
-BR2_PACKAGE_EXFATPROGS=y
-
 # Secure boot tooling
 BR2_PACKAGE_OPENSSL=y
 BR2_PACKAGE_LIBOPENSSL_BIN=y
 BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_LIBUUID=y
-BR2_PACKAGE_GNU_EFI=y
 BR2_PACKAGE_EFITOOLS=y
 BR2_PACKAGE_SBSIGNTOOLS=y
 BR2_PACKAGE_JQ=y
-
-# System
-BR2_PACKAGE_EFIBOOTMGR=y
-BR2_TARGET_SYSLINUX=y
-BR2_TARGET_SYSLINUX_MBR=y
 
 # Kernel configuration
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../../sb_enema/board/sb-enema/kernel-fragment.config"
-
-# Bootloader
-# BR2_TARGET_GRUB2=y
-# BR2_TARGET_GRUB2_BUILTIN_CONFIG_EFI="../../sb_enema/board/sb-enema/grub.cfg"
-# BR2_TARGET_GRUB2_X86_64_EFI=y
-# BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_msdos part_gpt normal video video_fb gfxterm gfxmenu efi_gop gzio serial terminal terminfo search search_fs_file search_fs_uuid search_label echo"
 
 # Host tooling required for image creation
 BR2_PACKAGE_HOST_GENIMAGE=y

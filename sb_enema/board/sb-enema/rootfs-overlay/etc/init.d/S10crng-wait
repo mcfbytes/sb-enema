@@ -1,0 +1,18 @@
+#!/bin/sh
+# S10crng-wait — Block until the kernel CRNG is fully initialized.
+
+case "$1" in
+    start)
+        if dd if=/dev/random of=/dev/null bs=32 count=1 2>/dev/null; then
+            echo "CRNG initialized"
+        else
+            echo "Warning: /dev/random read failed; CRNG state unknown" >&2
+        fi
+        ;;
+    stop|restart|reload)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac

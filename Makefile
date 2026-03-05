@@ -25,9 +25,11 @@ secureboot-objects:
 # Usage: make dist          → dist/sb-enema.zip + dist/SHA256SUMS
 dist: all
 	mkdir -p $(ROOT_DIR)/dist
-	zip -j $(ROOT_DIR)/dist/sb-enema.zip $(BR_OUT)/images/sb-enema.img
+	cp $(BR_OUT)/images/sb-enema.img $(ROOT_DIR)/dist/
+	zip -j $(ROOT_DIR)/dist/sb-enema.zip $(ROOT_DIR)/dist/sb-enema.img
 	(cd $(ROOT_DIR)/dist && sha256sum sb-enema.zip > SHA256SUMS)
 	(cd $(BR_OUT)/images && sha256sum sb-enema.img) >> $(ROOT_DIR)/dist/SHA256SUMS
+	cp docs/release-README.md dist/README.md
 	@echo "Compressed image: $(ROOT_DIR)/dist/sb-enema.zip"
 
 # --- Download & extract Buildroot -------------------------------------------

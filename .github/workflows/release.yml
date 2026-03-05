@@ -81,7 +81,7 @@ jobs:
 
       - name: Build images
         run: |
-          make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
+          make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y dist
 
       - name: Run Trivy rootfs scan
         uses: aquasecurity/trivy-action@0.34.2
@@ -108,15 +108,6 @@ jobs:
           format: spdx-json
           output-file: "${{ github.workspace }}/sbom/sbom.spdx.json"
 
-      - name: Stage artifacts
-        run: |
-          mkdir -p dist
-          cp output/br-out/images/sb-enema.img dist/
-          cp docs/release-README.md dist/README.md
-          cp trivy-rootfs.sarif dist/
-          cp sbom/sbom.spdx.json dist/
-          (cd dist && sha256sum sb-enema.img > SHA256SUMS)
-
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
@@ -127,11 +118,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/sb-enema.img
+            dist/sb-enema.zip
             dist/README.md
             dist/SHA256SUMS
-            dist/sbom.spdx.json
-            dist/trivy-rootfs.sarif
+            sbom/sbom.spdx.json
+            trivy-rootfs.sarif
 
       - name: SBOM upload
         uses: advanced-security/spdx-dependency-submission-action@v0.2.0
