@@ -1,5 +1,5 @@
 # --- Buildroot versioning ----------------------------------------------------
-BUILDROOT_VERSION ?= 2026.02-rc2
+BUILDROOT_VERSION ?= 2026.02
 BUILDROOT_URL ?= https://buildroot.org/downloads/buildroot-$(BUILDROOT_VERSION).tar.gz
 
 ROOT_DIR := $(CURDIR)
