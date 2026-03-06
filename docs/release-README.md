@@ -3,7 +3,7 @@
 ## What this image does
 - Boots a minimal Linux environment, automatically logs in as root, and runs `sb-enema`. The `SB-ENEMA` FAT32 data partition is mounted at `/mnt/data` before `sb-enema` starts.
 - Applies UEFI Secure Boot variables (PK/KEK/db/dbx) using staged payloads generated from `microsoft/secureboot_objects`, preferring the prebuilt binaries and falling back to local ESL/signing if absent.
-- Logs actions to `/mnt/sb-enema/logs/provision.log` and refuses PK replacement unless the platform is in Setup Mode.
+- Logs actions to `/mnt/data/sb-enema/logs/sb-enema-<timestamp>.log` and refuses PK replacement unless the platform is in Setup Mode.
 
 ## How to flash
 1. Download the release assets:
@@ -32,4 +32,4 @@
      ```sh
      sudo dd if=sb-enema.img of=/dev/sdX bs=4M status=progress && sync
      ```
-6. Boot the target machine from the USB stick with UEFI Secure Boot in Setup Mode. Provisioning runs automatically; review `/mnt/sb-enema/logs/provision.log` afterward.
+6. Boot the target machine from the USB stick with UEFI Secure Boot in Setup Mode. Provisioning runs automatically; review `/mnt/data/sb-enema/logs/sb-enema-<timestamp>.log` afterward.
