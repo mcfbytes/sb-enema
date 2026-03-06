@@ -544,13 +544,13 @@ function Invoke-AuditDefaultVars {
     }
 
     # Defaults 2026-readiness:
-    #   PK present and not a test key AND db has 2023 certs AND dbx is current
+    #   PK present and not a test key AND KEK ok AND db has 2023 certs AND dbx is current
     #   (KEK user-chain is acceptable, same logic as Invoke-AuditKek)
     $defaultPkOk  = $result.Pk.Present -and (-not $result.Pk.IsTest) -and (-not $result.Pk.IsExpired)
     $defaultKekOk = $result.Kek.HasMs2023 -or $result.Kek.HasUserKek -or ($result.Kek.CertCount -eq 0)  # absent defaults = unchanged
     $defaultDbOk  = $result.Db.Has2023
     $defaultDbxOk = $result.Dbx.IsCurrent
-    $result.DefaultsReady = $defaultPkOk -and $defaultDbOk -and $defaultDbxOk
+    $result.DefaultsReady = $defaultPkOk -and $defaultKekOk -and $defaultDbOk -and $defaultDbxOk
 
     # Safety verdict logic:
     #   UNSAFE   — defaults would install a known test/placeholder PK
@@ -890,7 +890,7 @@ Write-Hr
 Write-Host "  SB-ENEMA Secure Boot Health Report" -ForegroundColor Cyan
 Write-Hr
 Write-Host ""
-Write-Host "  Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC" -ForegroundColor White
+Write-Host "  Date (UTC): $([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor White
 Write-Host ""
 
 # Secure Boot enabled/disabled
