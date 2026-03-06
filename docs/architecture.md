@@ -5,16 +5,17 @@ Produce a minimal Buildroot-based USB image for reprovisioning UEFI Secure Boot 
 
 ## Buildroot configuration
 - Target: x86_64 EFI boot with a compressed initramfs.
-- Packages: `efitools`, `curl`, `exfatprogs`, BusyBox, GRUB2 (EFI).
+- Packages: `efitools`, `curl`, `dosfstools`, BusyBox, GRUB2 (EFI).
 - Overlays:
   - `/usr/sbin/sb-enema`: interactive/CLI entrypoint that mounts, audits, previews, and enrolls.
   - `/etc/init.d/S40sb-enema`: mounts the data partition and launches `sb-enema` on boot.
-- Kernel fragment enables EFI stub boot, EFI variable access, FAT/exFAT, loop devices, and necessary NLS support.
+  - `/root/.profile`: runs `sb-enema` automatically after the auto-login on the console.
+- Kernel fragment enables EFI stub boot, EFI variable access, FAT32, loop devices, and necessary NLS support.
 
 ## Image layout
 `sb_enema/board/sb-enema/genimage/genimage.cfg` produces a hybrid GPT disk image:
 - **Partition 1 (FAT32, label EFI):** GRUB EFI binary, kernel `bzImage`, and `rootfs.cpio.gz`.
-- **Partition 2 (exFAT, label SB-ENEMA):** Seeded from `sb_enema/board/sb-enema/exfat-seed/` and, at build time, augmented with staged Secure Boot artifacts (`secureboot_artifacts/` plus `PreSignedObjects/`, `Templates/`, and `scripts/`) from the `secureboot_objects` submodule. It also retains directories for `PK/`, `KEK/`, `DB/`, `DBX/`, and `logs/`.
+- **Partition 2 (FAT32, label SB-ENEMA):** Seeded from `sb_enema/board/sb-enema/exfat-seed/` and, at build time, augmented with staged Secure Boot artifacts (`secureboot_artifacts/` plus `PreSignedObjects/`, `Templates/`, and `scripts/`) from the `secureboot_objects` submodule. It also retains directories for `PK/`, `KEK/`, `DB/`, `DBX/`, and `logs/`.
 
 ## Provisioning flow (runtime)
 1. Init script mounts `/dev/disk/by-label/SB-ENEMA` at `/mnt/data` and launches `sb-enema`.
@@ -25,7 +26,7 @@ Produce a minimal Buildroot-based USB image for reprovisioning UEFI Secure Boot 
 
 ## Build pipeline
 - `Makefile` downloads a pinned Buildroot release, applies the provided defconfig, and builds using an out-of-tree output directory.
-- `scripts/prepare-secureboot-objects.sh` installs python deps for the `secureboot_objects` submodule, runs `secure_boot_default_keys.py` to emit firmware payloads, and stages both the generated payloads and source certificates/scripts/templates into `output/secureboot-staging` for inclusion in the exFAT partition.
+- `scripts/prepare-secureboot-objects.sh` installs python deps for the `secureboot_objects` submodule, runs `secure_boot_default_keys.py` to emit firmware payloads, and stages both the generated payloads and source certificates/scripts/templates into `output/secureboot-staging` for inclusion in the FAT32 data partition.
 - `scripts/generate-pk.sh` remains available to pre-seed custom PK/KEK keypairs if you opt out of the Microsoft PK defaults.
-- `post-image.sh` assembles the final disk image with a bootable FAT32 EFI partition and an exFAT data partition (requires host `mkfs.exfat`).
-- Microsoft Secure Boot assets are sourced from the `third_party/secureboot_objects` submodule. `scripts/prepare-secureboot-objects.sh` installs that repo's Python deps and runs `secure_boot_default_keys.py` to emit firmware payloads (PK/KEK/db/dbx) and stages the repo's certificates/scripts/templates onto the exFAT partition.
+- `post-image.sh` assembles the final disk image with a bootable FAT32 EFI partition and a FAT32 data partition (requires host `mkfs.fat` from `dosfstools`).
+- Microsoft Secure Boot assets are sourced from the `third_party/secureboot_objects` submodule. `scripts/prepare-secureboot-objects.sh` installs that repo's Python deps and runs `secure_boot_default_keys.py` to emit firmware payloads (PK/KEK/db/dbx) and stages the repo's certificates/scripts/templates onto the FAT32 data partition.

@@ -1,7 +1,7 @@
 # SB-ENEMA Secure Boot reprovisioning USB image
 
 ## What this image does
-- Boots a minimal Linux environment that mounts the `SB-ENEMA` exFAT partition.
+- Boots a minimal Linux environment, automatically logs in as root, and runs `sb-enema`. The `SB-ENEMA` FAT32 data partition is mounted at `/mnt/data` before `sb-enema` starts.
 - Applies UEFI Secure Boot variables (PK/KEK/db/dbx) using staged payloads generated from `microsoft/secureboot_objects`, preferring the prebuilt binaries and falling back to local ESL/signing if absent.
 - Logs actions to `/mnt/sb-enema/logs/provision.log` and refuses PK replacement unless the platform is in Setup Mode.
 
