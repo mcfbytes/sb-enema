@@ -58,7 +58,7 @@ User PK → User KEK → Microsoft DB/DBX
 
 You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your KEK so Windows, WHQL drivers, and the UEFI shim bootloader still work. This gives you deterministic control over what boots on your hardware.
 
-> **Important:** The PK private key is never stored on the target device—only in the EFI variables as a public certificate. If you generate a PK with this tool, the private key is saved to the exFAT partition on the USB drive. **Back it up.** If you lose it and need to modify your Secure Boot variables later, you'll need to re-enter Setup Mode and re-provision.
+> **Important:** The PK private key is never stored on the target device—only in the EFI variables as a public certificate. If you generate a PK with this tool, the private key is saved to the FAT32 data partition on the USB drive. **Back it up.** If you lose it and need to modify your Secure Boot variables later, you'll need to re-enter Setup Mode and re-provision.
 
 ## BitLocker, TPM, and Why This Matters
 
@@ -152,7 +152,7 @@ make dist
 git clone --recursive https://github.com/mcfbytes/sb-enema.git
 cd sb-enema
 
-# Build (requires: curl, openssl, mkfs.exfat, rsync, sudo, python3-venv)
+# Build (requires: curl, openssl, mkfs.fat, rsync, sudo, python3-venv)
 make BR2_EXTERNAL=$(pwd)/sb_enema images
 
 # Output lands in output/br-out/images/sb-enema.img
@@ -219,26 +219,27 @@ This is a [Buildroot](https://buildroot.org/)-based project that builds a minima
 2. Generates firmware payloads (PK/KEK/db/dbx) using Microsoft's Python tooling
 3. Packages everything into a hybrid GPT image with:
    - FAT32 EFI boot partition (GRUB, kernel, initramfs)
-   - exFAT data partition (certs, payloads, logs, generated private keys)
+   - FAT32 data partition (certs, payloads, logs, generated private keys)
 
 At runtime:
 
-1. Mounts the exFAT data partition and EFI variable filesystem
-2. Audits current Secure Boot state: identifies test PKs, validates certificate expiry, checks 2026 readiness
-3. Identifies the current ownership model (vendor-owned, Microsoft-owned, custom, or test)
-4. Renders a health report with per-certificate status and severity-graded findings
-5. For any provisioning operation: computes the delta (what will be added/removed/kept per variable), shows a preview, and requires explicit confirmation before touching anything
-6. Applies variables in the correct order (db → dbx → KEK → PK) using `efi-updatevar`
-7. Logs every action with timestamps to the USB drive
+1. Automatically logs in as root and runs `sb-enema` (via `/root/.profile`).
+2. The FAT32 data partition is mounted at `/mnt/data` before `sb-enema` starts.
+3. Audits current Secure Boot state: identifies test PKs, validates certificate expiry, checks 2026 readiness
+4. Identifies the current ownership model (vendor-owned, Microsoft-owned, custom, or test)
+5. Renders a health report with per-certificate status and severity-graded findings
+6. For any provisioning operation: computes the delta (what will be added/removed/kept per variable), shows a preview, and requires explicit confirmation before touching anything
+7. Applies variables in the correct order (db → dbx → KEK → PK) using `efi-updatevar`
+8. Logs every action with timestamps to the USB drive
 
-All generated private keys stay on the exFAT partition. They never touch the target system.
+All generated private keys stay on the FAT32 data partition. They never touch the target system.
 
 ## Requirements
 
 **Build host:**
 - `curl`, `tar`, `git`
 - `openssl`
-- `mkfs.exfat` (from `exfatprogs`)
+- `mkfs.fat` (from `dosfstools`)
 - `rsync`, `sudo`
 - `python3-venv`
 
