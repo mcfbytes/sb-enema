@@ -74,7 +74,7 @@ jobs:
           make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sb-enema-image
           path: output/br-out/images/sb-enema.img
