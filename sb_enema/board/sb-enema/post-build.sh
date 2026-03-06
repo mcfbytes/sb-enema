@@ -1,5 +1,6 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+
+set -euo pipefail
 
 TARGET_DIR="$1"
 
