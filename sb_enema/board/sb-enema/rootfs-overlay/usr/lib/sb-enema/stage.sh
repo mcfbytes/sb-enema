@@ -34,6 +34,13 @@ MSFT_PAYLOADS_SUBDIR="${PAYLOAD_DIR}/microsoft"
 MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 
 # ---------------------------------------------------------------------------
+# Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
+# Populated at build time by prepare-secureboot-objects.sh from the
+# third_party/secureboot_objects submodule (PostSignedObjects/KEK/).
+# ---------------------------------------------------------------------------
+KEK_UPDATE_MAP="${DATA_MOUNT}/sb-enema/kek_update_map.json"
+
+# ---------------------------------------------------------------------------
 # stage_clear()
 #   Remove all staged content from PAYLOAD_DIR except the microsoft/
 #   subdirectory (which contains read-only pre-built payloads).
@@ -304,8 +311,12 @@ stage_microsoft_kek_db_dbx() {
 
 # ---------------------------------------------------------------------------
 # _stage_build_kek_esl <workdir> <kek_crt> <owner_guid>
-#   Internal helper: combine user KEK + Microsoft KEK certificates into a
-#   single ESL at <workdir>/KEK.esl.
+#   Internal helper: combine user KEK + Microsoft KEK + any vendor-staged KEK
+#   certificates into a single ESL at <workdir>/KEK.esl.
+#   Vendor-staged certs are files matching "default-KEKDefault-*.der" in
+#   PAYLOAD_DIR/KEK/ (placed there by stage_bios_entries()).  Only that glob
+#   is used so that Microsoft-owned .der files copied into PAYLOAD_DIR/KEK/
+#   by stage_microsoft_kek_db_dbx() are not double-counted.
 # ---------------------------------------------------------------------------
 _stage_build_kek_esl() {
     local workdir="$1"
@@ -347,6 +358,27 @@ _stage_build_kek_esl() {
         eval "${_old_nullglob}"
     else
         log_warn "Microsoft KEK certificates not found in ${kek_certs_dir}; KEK will contain only user key"
+    fi
+
+    # Include vendor default KEK certs staged by stage_bios_entries().
+    # Only files matching the naming convention "default-KEKDefault-*.der" are
+    # included, so that Microsoft-owned .der files copied into PAYLOAD_DIR/KEK/
+    # by stage_microsoft_kek_db_dbx() are not accidentally double-counted.
+    if [[ -d "${PAYLOAD_DIR}/KEK" ]]; then
+        local _old_nullglob_vendor
+        _old_nullglob_vendor=$(shopt -p nullglob) || true
+        shopt -s nullglob
+        local vendor_der
+        for vendor_der in "${PAYLOAD_DIR}/KEK"/default-KEKDefault-*.der; do
+            local vendor_tmp_esl vendor_cert_pem
+            vendor_tmp_esl="${workdir}/KEK-vendor-$(basename "${vendor_der}").esl"
+            vendor_cert_pem="${workdir}/KEK-vendor-$(basename "${vendor_der%.*}").pem"
+            openssl x509 -inform DER -in "${vendor_der}" -out "${vendor_cert_pem}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${vendor_cert_pem}" "${vendor_tmp_esl}"
+            cat "${vendor_tmp_esl}" >> "${combined_esl}"
+            log_info "Added staged vendor KEK certificate: $(basename "${vendor_der}")"
+        done
+        eval "${_old_nullglob_vendor}"
     fi
 }
 
@@ -711,67 +743,191 @@ stage_sign_db() {
 }
 
 # ---------------------------------------------------------------------------
+# stage_sign_kek()
+#   Rebuild KEK.auth from all staged KEK certs — user KEK, Microsoft KEK, and
+#   any vendor default KEK certs placed in PAYLOAD_DIR/KEK/ by
+#   stage_bios_entries() — signed by the user PK with a fresh timestamp.
+#   Always overwrites any existing PAYLOAD_DIR/KEK.auth.
+#   Requires keygen_generate_keys() to have been run first.
+# ---------------------------------------------------------------------------
+stage_sign_kek() {
+    log_info "Building fresh KEK.auth signed by user PK from staged certs"
+
+    local pk_key="${KEYS_DIR}/PK.key"
+    local pk_crt="${KEYS_DIR}/PK.crt"
+    local kek_crt="${KEYS_DIR}/KEK.crt"
+
+    local f
+    for f in "${pk_key}" "${pk_crt}" "${kek_crt}"; do
+        [[ -f "${f}" ]] || die "Required key file missing: ${f}. Run keygen_generate_keys first."
+    done
+
+    # Run in a subshell so that the EXIT trap for tempdir cleanup does not
+    # clobber any RETURN trap set by a calling function.
+    (
+        OWNER_GUID=$(keygen_load_or_generate_guid)
+
+        local workdir
+        workdir=$(mktemp -d) || die "Failed to create temp directory"
+        trap 'rm -rf "${workdir}"' EXIT
+
+        _stage_build_kek_esl "${workdir}" "${kek_crt}" "${OWNER_GUID}"
+        sign-efi-sig-list -g "${OWNER_GUID}" \
+            -k "${pk_key}" -c "${pk_crt}" \
+            KEK "${workdir}/KEK.esl" "${PAYLOAD_DIR}/KEK.auth"
+        local sha256
+        sha256=$(sha256sum "${PAYLOAD_DIR}/KEK.auth" | awk '{print $1}')
+        log_action "STAGE" "KEK.auth" "SUCCESS" "signed by user PK SHA256=${sha256}"
+
+        log_success "KEK.auth built from all staged KEK certs and signed by user PK"
+    )
+}
+
+# ---------------------------------------------------------------------------
+# _is_in_kek_update_map <sha1_fingerprint>
+#   Return 0 if <sha1_fingerprint> (lowercase hex, no colons) appears as a
+#   top-level key in KEK_UPDATE_MAP (kek_update_map.json).
+#   The JSON maps SHA-1 PK certificate fingerprints to vendor KEK update bins.
+#   Returns 1 if the file is absent or the fingerprint is not found.
+#   File-existence is cached in _KEK_UPDATE_MAP_STATUS so that a single warning
+#   is emitted even when called repeatedly from stage_bios_entries().
+# ---------------------------------------------------------------------------
+_is_in_kek_update_map() {
+    local sha1="$1"
+    # _KEK_UPDATE_MAP_STATUS is a module-level cache variable (set on first call,
+    # persists for the lifetime of the sourced script).  Values: "present" or
+    # "missing"; empty/unset means not yet checked.  This avoids repeating the
+    # file-existence test and emitting a warning for every certificate when
+    # stage_bios_entries() iterates over multiple certs.
+    if [[ -z "${_KEK_UPDATE_MAP_STATUS:-}" ]]; then
+        if [[ -f "${KEK_UPDATE_MAP}" ]]; then
+            _KEK_UPDATE_MAP_STATUS="present"
+        else
+            log_warn "kek_update_map.json not found at ${KEK_UPDATE_MAP}; vendor cert check skipped"
+            _KEK_UPDATE_MAP_STATUS="missing"
+        fi
+    fi
+    if [[ "${_KEK_UPDATE_MAP_STATUS}" != "present" ]]; then
+        return 1
+    fi
+    jq -e --arg key "${sha1}" 'has($key)' "${KEK_UPDATE_MAP}" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
 # stage_bios_entries()
-#   Stage "BIOS entries" — certificates currently in the firmware that are
-#   NOT in the Microsoft known-cert database AND NOT the user's own certs.
-#   These are preserved so that OEM/vendor-specific entries are not lost.
-#   Applies to KEK and db only (dbx contains hash bundles, not X.509 certs).
+#   Stage vendor default firmware entries from KEKDefault and dbDefault —
+#   the read-only NVRAM variables that hold the OEM-factory Secure Boot
+#   certificates before any user modification.
+#
+#   The user may have wiped KEK/db prior to running this tool; KEKDefault and
+#   dbDefault are preserved by the firmware and represent the vendor-installed
+#   baseline that should be re-instated.
+#
+#   Inclusion criteria (both must pass):
+#   1. The cert's SHA-1 fingerprint appears as a key in kek_update_map.json
+#      (the Microsoft OEM vendor PK → KEK update map from the
+#      secureboot_objects submodule).  Certs not in this map are skipped.
+#   2. The cert's SHA-256 fingerprint does NOT appear in known-test-pks.txt.
+#      Test/placeholder certificates are never staged.
+#
+#   Microsoft-signed KEK/db certs are also excluded (they are handled by
+#   stage_microsoft_kek_db_dbx).
+#
+#   Applies to KEKDefault → staged under PAYLOAD_DIR/KEK/
+#             dbDefault   → staged under PAYLOAD_DIR/db/
 # ---------------------------------------------------------------------------
 stage_bios_entries() {
-    log_info "Staging unknown BIOS entries from firmware"
+    log_info "Staging vendor default entries from KEKDefault and dbDefault"
 
-    local varname
-    for varname in KEK db; do
-        local tmpdir
-        tmpdir=$(mktemp -d) || { log_error "Failed to create temp directory"; return 1; }
-        # shellcheck disable=SC2064
-        trap "rm -rf '${tmpdir}'" RETURN
+    local tmpdir
+    tmpdir=$(mktemp -d) || { log_error "Failed to create temp directory"; return 1; }
+    # shellcheck disable=SC2064
+    trap "rm -rf '${tmpdir}'" RETURN
 
-        if ! efivar_extract_certs "${varname}" "${tmpdir}" 2>/dev/null; then
+    local varname stagedir
+    for varname in KEKDefault dbDefault; do
+        case "${varname}" in
+            KEKDefault) stagedir="${PAYLOAD_DIR}/KEK" ;;
+            dbDefault)  stagedir="${PAYLOAD_DIR}/db"  ;;
+        esac
+
+        local extractdir="${tmpdir}/${varname}"
+        mkdir -p "${extractdir}"
+
+        if ! efivar_extract_certs "${varname}" "${extractdir}" 2>/dev/null; then
             log_info "Could not extract ${varname} certs from firmware; skipping"
-            rm -rf "${tmpdir}"
             continue
         fi
 
         local idx=0
         local staged_count=0
-        while [[ -f "${tmpdir}/${varname}-${idx}.der" ]]; do
-            local der="${tmpdir}/${varname}-${idx}.der"
-            local fp_raw fp_hex
-            fp_raw=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                     | sed 's/.*Fingerprint=//;s/://g' \
-                     | tr '[:upper:]' '[:lower:]') || {
+        while [[ -f "${extractdir}/${varname}-${idx}.der" ]]; do
+            local der="${extractdir}/${varname}-${idx}.der"
+
+            # Compute SHA-1 fingerprint — used to look up certs in kek_update_map.json
+            local sha1_hex
+            sha1_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha1 2>/dev/null \
+                       | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                log_warn "Could not compute SHA-1 for ${varname}-${idx}.der; skipping"
                 idx=$((idx + 1))
                 continue
             }
-            fp_hex="${fp_raw}"
 
-            # Skip Microsoft known certs
-            if certdb_is_microsoft_kek "${fp_hex}" || certdb_is_microsoft_db "${fp_hex}"; then
-                log_info "Skipping known Microsoft ${varname} cert: ${fp_hex}"
+            # Compute SHA-256 fingerprint — used for test-cert and Microsoft-cert checks
+            local sha256_hex
+            sha256_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
+                         | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                log_warn "Could not compute SHA-256 for ${varname}-${idx}.der; skipping"
+                idx=$((idx + 1))
+                continue
+            }
+
+            # Skip certs not present in the vendor kek_update_map.json
+            if ! _is_in_kek_update_map "${sha1_hex}"; then
+                log_info "${varname} cert ${idx} not in kek_update_map.json (SHA1=${sha1_hex}); skipping"
                 idx=$((idx + 1))
                 continue
             fi
 
-            # Skip user's own certs
-            if _certdb_is_user_kek "${fp_hex}" || _certdb_is_user_pk "${fp_hex}"; then
-                log_info "Skipping user's own cert in ${varname}: ${fp_hex}"
+            # Skip known test/placeholder certificates
+            if certdb_is_test_pk "${sha256_hex}"; then
+                log_info "Skipping test certificate in ${varname} (SHA256=${sha256_hex})"
                 idx=$((idx + 1))
                 continue
             fi
 
-            # Unknown BIOS cert — stage it for preservation
-            mkdir -p "${PAYLOAD_DIR}/${varname}"
-            local dest="${PAYLOAD_DIR}/${varname}/bios-${varname}-${idx}.der"
+            # Skip Microsoft-owned certs (handled by stage_microsoft_kek_db_dbx)
+            if certdb_is_microsoft_kek "${sha256_hex}" || certdb_is_microsoft_db "${sha256_hex}"; then
+                log_info "Skipping known Microsoft cert in ${varname} (SHA256=${sha256_hex})"
+                idx=$((idx + 1))
+                continue
+            fi
+
+            # Stage the vendor cert
+            mkdir -p "${stagedir}"
+            local dest="${stagedir}/default-${varname}-${idx}.der"
             cp "${der}" "${dest}"
-            log_info "Staged unknown BIOS ${varname} cert ${idx}: ${fp_hex}"
+            log_info "Staged ${varname} cert ${idx}: SHA1=${sha1_hex}"
             staged_count=$((staged_count + 1))
             idx=$((idx + 1))
         done
 
-        log_info "Staged ${staged_count} unknown BIOS ${varname} entries"
-        rm -rf "${tmpdir}"
+        log_info "Staged ${staged_count} recognized vendor ${varname} entries"
     done
 
-    log_success "BIOS entries staging complete"
+    log_success "Vendor default entries staging complete"
+
+    # Rebuild auth payloads to include the newly staged vendor certs.  Only
+    # possible if user keys and certs have already been generated.
+    local pk_key="${KEYS_DIR}/PK.key"
+    local kek_key="${KEYS_DIR}/KEK.key"
+    local pk_crt="${KEYS_DIR}/PK.crt"
+    local kek_crt="${KEYS_DIR}/KEK.crt"
+    if [[ -f "${pk_key}" && -f "${kek_key}" && -f "${pk_crt}" && -f "${kek_crt}" ]]; then
+        log_info "Rebuilding KEK.auth and db.auth to include staged vendor certs"
+        stage_sign_kek
+        stage_sign_db
+    else
+        log_info "User keys/certs not yet generated; skipping auth payload rebuild (run keygen first, then re-stage)"
+    fi
 }

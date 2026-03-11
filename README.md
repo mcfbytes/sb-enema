@@ -19,6 +19,8 @@ A bootable USB image that audits, repairs, and re-provisions your UEFI Secure Bo
 | You want full Secure Boot ownership | Will generate your own PK/KEK and enroll Microsoft db/dbx |
 | You need a known-good Secure Boot chain | Will offer a Microsoft PK recovery mode |
 | You just want to know if you're 2026-ready | Will run a health check and tell you |
+| You wiped KEK/db and want vendor certs back | Will stage recognized OEM certs from KEKDefault/dbDefault |
+| Windows user who can't boot a Linux USB | `SecureBootChecker.ps1` runs a full audit from a PowerShell prompt |
 
 ## ⚠️ Warnings and Safety Notes
 
@@ -62,7 +64,15 @@ You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your K
 
 ## BitLocker, TPM, and Why This Matters
 
-Changing Secure Boot variables changes TPM PCR values (PCR 7 for Secure Boot policy, PCR 4 for boot manager, PCR 0 for firmware). BitLocker seals its volume master key against these PCRs. When they change, BitLocker can't unseal the key automatically.
+This tool modifies Secure Boot variables (PK/KEK/DB/DBX). These changes may alter TPM PCR measurements, especially PCR 7 (Secure Boot policy), PCR 4 (boot manager), and PCR 0 (firmware). BitLocker protects its volume master key by sealing it to a specific PCR profile.
+
+When the final PCR values differ from the values BitLocker previously sealed against, Windows may require a BitLocker recovery key on the next boot.
+
+However, not all Secure Boot variable changes produce new PCR measurements. Many UEFI implementations measure only the effective Secure Boot state (e.g., SecureBootEnabled, SetupMode) rather than the raw contents of PK/KEK/DB. If the system returns to the same effective Secure Boot state after the change, the resulting PCR values may match the previous ones, and BitLocker will not prompt for recovery.
+
+Additionally, once Windows completes a successful boot after a Secure Boot change, it may automatically re‑seal the BitLocker key to the new PCR profile. Subsequent reboots will then proceed without a recovery prompt.
+
+In short: Secure Boot variable changes can trigger BitLocker recovery, but whether they do depends on the firmware’s PCR measurement behavior and whether Windows has already re‑sealed the TPM key.
 
 **What to expect:**
 
@@ -85,13 +95,14 @@ Things went wrong, or you changed your mind. Here are your options, from easiest
 - Use this if OEM tools, OEM recovery partitions, or firmware updates require vendor-specific keys.
 - This is the "undo" button. It always works.
 
-### B. Custom Secure Boot Ownership (Recommended for Enthusiasts)
+### B. Custom Secure Boot Ownership — "Full Colonic" (Recommended for Enthusiasts)
 
-- Install your own PK and KEK. Enroll Microsoft's db/dbx for Windows compatibility.
+- Generates your own PK and KEK and enrolls Microsoft's db/dbx for Windows compatibility.
+- The SB-ENEMA boot volume itself is re-signed with your new DB key so it can boot under Secure Boot on the next power-on.
 - OEM-specific Secure Boot features may not work—but if you're building your own rigs, you almost certainly don't use them.
-- The tool generates a fresh PK/KEK pair and stores the private keys on the USB drive. Back them up.
+- The tool generates a fresh PK/KEK/DB key pair and stores the private keys on the USB drive. Back them up.
 
-### C. Microsoft PK Recovery Mode (Last Resort)
+### C. Microsoft PK Recovery Mode — "Microsoft Colonic"
 
 - Switches to: Microsoft PK → Microsoft KEK → Microsoft db/dbx.
 - Produces a fully valid, standards-compliant Secure Boot chain.
@@ -99,6 +110,11 @@ Things went wrong, or you changed your mind. Here are your options, from easiest
 - BIOS firmware updates still work—they use a separate firmware-update signing key, not the Secure Boot chain.
 - Reversible by restoring factory keys.
 - Use this when the vendor PK is invalid, expired, or a known test key, and you don't want to manage your own keys.
+
+### D. Add Missing Microsoft Entries — "Microsoft Suppository"
+
+- Keeps your current PK. Adds missing Microsoft KEK/db/dbx to the firmware.
+- Use this when your system already has a valid PK but is missing current Microsoft 2023 CA certificates or an up-to-date revocation list.
 
 > ⚠️ Switching platform ownership is a deliberate action. The tool will show you exactly what it plans to do and ask for confirmation.
 
@@ -118,23 +134,27 @@ See [ROADMAP.md](ROADMAP.md) for the full breakdown. The short version:
 - Microsoft PK Recovery Mode with appropriate warnings
 - Custom Owner Mode with deterministic PK/KEK/db generation
 - "Restore OEM Defaults" reminder and instructions
+- Stage recognized vendor OEM certs from firmware-preserved `KEKDefault`/`dbDefault` variables
+- Self-sign the SB-ENEMA `BOOTX64.EFI` with your new DB key after Custom Owner Mode enrollment
+- Windows Secure Boot health checker (`SecureBootChecker.ps1`) — no Linux required
+- Audit firmware-preserved default variables (`PKDefault`, `KEKDefault`, `dbDefault`, `dbxDefault`) for 2026 readiness and regression risk
 
 ## Image Size
 
-The raw `sb-enema.img` is ~80 MiB, yet it compresses to ~20 MiB. This is normal and intentional.
+The raw `sb-enema.img` is ~140 MiB, yet it compresses to ~20 MiB. This is normal and intentional.
 
 GPT disk images have fixed-size partitions. Both the EFI System Partition and the data partition are pre-allocated to a known size so that `dd` and Rufus can write the image directly to any USB stick without resizing. Unused space within each partition is zero-filled, which compresses extremely well.
 
 | Partition | Raw size | Typical content |
 |---|---|---|
-| EFI System (`boot.vfat`) | 48 MiB | `BOOTX64.EFI` (kernel, ~12 MiB) + `rootfs.cpio.gz` (~15 MiB) |
+| EFI System (`boot.vfat`) | 100 MiB | `BOOTX64.EFI` (kernel, ~12 MiB) + `rootfs.cpio.gz` (~15 MiB) |
 | Data (`SB-ENEMA`) | 32 MiB | Secureboot payloads, generated keys, logs |
 
 **Override partition sizes at build time:**
 
 ```sh
 # Larger data partition (e.g. 128 MiB)
-DATA_SIZE=128M make images
+DATA_SIZE=128M make dist
 ```
 
 **Produce a compressed image for distribution (ZIP – Windows-friendly):**
@@ -153,9 +173,9 @@ git clone --recursive https://github.com/mcfbytes/sb-enema.git
 cd sb-enema
 
 # Build (requires: curl, openssl, mkfs.fat, rsync, sudo, python3-venv)
-make BR2_EXTERNAL=$(pwd)/sb_enema images
+make dist
 
-# Output lands in output/br-out/images/sb-enema.img
+# Output lands in dist/sb-enema.img
 ```
 
 ## Flashing
@@ -185,27 +205,30 @@ sudo dd if=output/br-out/images/sb-enema.img of=/dev/sdX bs=4M status=progress &
 
 ```
 ├── Makefile                    # Wrapper for Buildroot build
+├── SecureBootChecker.ps1       # Windows-native Secure Boot health checker
 ├── sb_enema/                   # Buildroot external tree (configs, overlays, packages)
 │   ├── configs/                # Buildroot defconfig (minimal x86_64 Linux)
-│   ├── package/                # Custom packages (efitools)
+│   ├── package/                # Custom packages (efitools, sbsigntools)
 │   └── board/sb-enema/
 │       └── rootfs-overlay/usr/
 │           ├── sbin/
-│           │   └── sb-enema                # Main runtime entry point
+│           │   └── sb-enema                # Main runtime entry point (menu + CLI)
 │           └── lib/sb-enema/
 │               ├── audit.sh                # Secure Boot health audit engine
 │               ├── report.sh               # Health report renderer
 │               ├── preview.sh              # Change preview & user confirmation
 │               ├── update.sh               # Delta computation (ADD/REMOVE/KEEP)
-│               ├── enroll-custom.sh        # Custom Owner Mode enrollment
-│               ├── enroll-microsoft.sh     # Microsoft cert chain enrollment
+│               ├── stage.sh                # Staging functions (PK/KEK/db/dbx payloads)
+│               ├── enroll.sh               # Generic enrollment (applies staged payloads)
+│               ├── keygen.sh               # Key generation, GUID management, backup instructions
+│               ├── safety.sh               # Safety guardrails (Setup Mode, payload integrity)
 │               ├── certdb.sh               # Certificate fingerprint lookups
-│               ├── efivar.sh               # EFI variable I/O
+│               ├── efivar.sh               # EFI variable I/O (including KEKDefault/dbDefault)
 │               ├── mount.sh                # Partition mount helpers
 │               ├── log.sh                  # Structured logging
 │               ├── common.sh               # Shared constants & helpers
 │               └── known-certs/            # Certificate fingerprint databases
-├── scripts/                    # Build-time helpers (PK generation, payload prep)
+├── scripts/                    # Build-time helpers (payload prep, test scripts)
 ├── third_party/
 │   └── secureboot_objects/     # Microsoft reference certs/templates (submodule)
 └── docs/                       # Detailed architecture & usage docs

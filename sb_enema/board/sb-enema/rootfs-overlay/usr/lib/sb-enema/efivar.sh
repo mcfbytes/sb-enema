@@ -17,10 +17,10 @@ readonly EFI_IMAGE_SECURITY_GUID="d719b2cb-3d3a-4596-a3bc-dad00e67656f"
 _efivar_guid_for() {
     local varname="$1"
     case "${varname}" in
-        PK|KEK|SecureBoot|SetupMode)
+        PK|KEK|KEKDefault|SecureBoot|SetupMode)
             echo "${EFI_GLOBAL_GUID}"
             ;;
-        db|dbx)
+        db|dbx|dbDefault)
             echo "${EFI_IMAGE_SECURITY_GUID}"
             ;;
         *)

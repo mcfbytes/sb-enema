@@ -48,6 +48,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`stage_bios_entries()`** now reads from `KEKDefault` and `dbDefault` EFI
+  variables instead of the live `KEK` and `db` variables. Since users may have
+  wiped `KEK`/`db` prior to running the tool, the firmware-preserved default
+  variables provide a reliable source of factory OEM certificates.
+  Inclusion criteria are now explicit: only certs whose SHA-1 fingerprint
+  appears as a key in `kek_update_map.json` (the Microsoft OEM vendor PK → KEK
+  update map from the `secureboot_objects` submodule) are staged; known
+  test/placeholder certificates (`known-test-pks.txt`) and known
+  Microsoft-owned certs are excluded. Renamed from "Stage BIOS entries" to
+  "Stage vendor default entries" in menus and CLI help.
+- **Full Colonic** workflow (`handle_full_colonic`) no longer calls
+  `stage_bios_entries()`. Vendor default entry staging is now an explicit
+  advanced step (menu option [9] / `stage-bios-entries` CLI) that users invoke
+  when they want to preserve recognized OEM certs alongside a user PK/KEK
+  enrollment.
+- **`prepare-secureboot-objects.sh`** now copies
+  `PostSignedObjects/KEK/kek_update_map.json` from the `secureboot_objects`
+  submodule to `output/secureboot-staging/sb-enema/kek_update_map.json`, making
+  it available on the data partition at `/mnt/data/sb-enema/kek_update_map.json`
+  for runtime use by `stage_bios_entries()`.
+- **`efivar.sh`** `_efivar_guid_for()` now recognises `KEKDefault`
+  (EFI_GLOBAL_GUID) and `dbDefault` (EFI_IMAGE_SECURITY_GUID).
+
 ### Fixed
 
 ### Security
