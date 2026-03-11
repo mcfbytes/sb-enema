@@ -313,9 +313,10 @@ stage_microsoft_kek_db_dbx() {
 # _stage_build_kek_esl <workdir> <kek_crt> <owner_guid>
 #   Internal helper: combine user KEK + Microsoft KEK + any vendor-staged KEK
 #   certificates into a single ESL at <workdir>/KEK.esl.
-#   Vendor-staged certs are .der files placed in PAYLOAD_DIR/KEK/ by
-#   stage_bios_entries(); .crt files in that directory are skipped here
-#   because the user KEK .crt is already added explicitly.
+#   Vendor-staged certs are files matching "default-KEKDefault-*.der" in
+#   PAYLOAD_DIR/KEK/ (placed there by stage_bios_entries()).  Only that glob
+#   is used so that Microsoft-owned .der files copied into PAYLOAD_DIR/KEK/
+#   by stage_microsoft_kek_db_dbx() are not double-counted.
 # ---------------------------------------------------------------------------
 _stage_build_kek_esl() {
     local workdir="$1"
@@ -359,14 +360,16 @@ _stage_build_kek_esl() {
         log_warn "Microsoft KEK certificates not found in ${kek_certs_dir}; KEK will contain only user key"
     fi
 
-    # Include any vendor default KEK certs staged by stage_bios_entries() (.der only;
-    # .crt files in PAYLOAD_DIR/KEK/ are the user KEK already added above).
+    # Include vendor default KEK certs staged by stage_bios_entries().
+    # Only files matching the naming convention "default-KEKDefault-*.der" are
+    # included, so that Microsoft-owned .der files copied into PAYLOAD_DIR/KEK/
+    # by stage_microsoft_kek_db_dbx() are not accidentally double-counted.
     if [[ -d "${PAYLOAD_DIR}/KEK" ]]; then
         local _old_nullglob_vendor
         _old_nullglob_vendor=$(shopt -p nullglob) || true
         shopt -s nullglob
         local vendor_der
-        for vendor_der in "${PAYLOAD_DIR}/KEK"/*.der; do
+        for vendor_der in "${PAYLOAD_DIR}/KEK"/default-KEKDefault-*.der; do
             local vendor_tmp_esl vendor_cert_pem
             vendor_tmp_esl="${workdir}/KEK-vendor-$(basename "${vendor_der}").esl"
             vendor_cert_pem="${workdir}/KEK-vendor-$(basename "${vendor_der%.*}").pem"
@@ -759,22 +762,25 @@ stage_sign_kek() {
         [[ -f "${f}" ]] || die "Required key file missing: ${f}. Run keygen_generate_keys first."
     done
 
-    OWNER_GUID=$(keygen_load_or_generate_guid)
+    # Run in a subshell so that the EXIT trap for tempdir cleanup does not
+    # clobber any RETURN trap set by a calling function.
+    (
+        OWNER_GUID=$(keygen_load_or_generate_guid)
 
-    local workdir
-    workdir=$(mktemp -d) || die "Failed to create temp directory"
-    # shellcheck disable=SC2064
-    trap "rm -rf '${workdir}'" RETURN
+        local workdir
+        workdir=$(mktemp -d) || die "Failed to create temp directory"
+        trap 'rm -rf "${workdir}"' EXIT
 
-    _stage_build_kek_esl "${workdir}" "${kek_crt}" "${OWNER_GUID}"
-    sign-efi-sig-list -g "${OWNER_GUID}" \
-        -k "${pk_key}" -c "${pk_crt}" \
-        KEK "${workdir}/KEK.esl" "${PAYLOAD_DIR}/KEK.auth"
-    local sha256
-    sha256=$(sha256sum "${PAYLOAD_DIR}/KEK.auth" | awk '{print $1}')
-    log_action "STAGE" "KEK.auth" "SUCCESS" "signed by user PK SHA256=${sha256}"
+        _stage_build_kek_esl "${workdir}" "${kek_crt}" "${OWNER_GUID}"
+        sign-efi-sig-list -g "${OWNER_GUID}" \
+            -k "${pk_key}" -c "${pk_crt}" \
+            KEK "${workdir}/KEK.esl" "${PAYLOAD_DIR}/KEK.auth"
+        local sha256
+        sha256=$(sha256sum "${PAYLOAD_DIR}/KEK.auth" | awk '{print $1}')
+        log_action "STAGE" "KEK.auth" "SUCCESS" "signed by user PK SHA256=${sha256}"
 
-    log_success "KEK.auth built from all staged KEK certs and signed by user PK"
+        log_success "KEK.auth built from all staged KEK certs and signed by user PK"
+    )
 }
 
 # ---------------------------------------------------------------------------
@@ -912,14 +918,16 @@ stage_bios_entries() {
     log_success "Vendor default entries staging complete"
 
     # Rebuild auth payloads to include the newly staged vendor certs.  Only
-    # possible if user keys have already been generated.
+    # possible if user keys and certs have already been generated.
     local pk_key="${KEYS_DIR}/PK.key"
     local kek_key="${KEYS_DIR}/KEK.key"
-    if [[ -f "${pk_key}" && -f "${kek_key}" ]]; then
+    local pk_crt="${KEYS_DIR}/PK.crt"
+    local kek_crt="${KEYS_DIR}/KEK.crt"
+    if [[ -f "${pk_key}" && -f "${kek_key}" && -f "${pk_crt}" && -f "${kek_crt}" ]]; then
         log_info "Rebuilding KEK.auth and db.auth to include staged vendor certs"
         stage_sign_kek
         stage_sign_db
     else
-        log_info "User keys not yet generated; skipping auth payload rebuild (run keygen first, then re-stage)"
+        log_info "User keys/certs not yet generated; skipping auth payload rebuild (run keygen first, then re-stage)"
     fi
 }
