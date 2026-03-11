@@ -64,7 +64,15 @@ You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your K
 
 ## BitLocker, TPM, and Why This Matters
 
-Changing Secure Boot variables changes TPM PCR values (PCR 7 for Secure Boot policy, PCR 4 for boot manager, PCR 0 for firmware). BitLocker seals its volume master key against these PCRs. When they change, BitLocker can't unseal the key automatically.
+This tool modifies Secure Boot variables (PK/KEK/DB/DBX). These changes may alter TPM PCR measurements, especially PCR 7 (Secure Boot policy), PCR 4 (boot manager), and PCR 0 (firmware). BitLocker protects its volume master key by sealing it to a specific PCR profile.
+
+When the final PCR values differ from the values BitLocker previously sealed against, Windows may require a BitLocker recovery key on the next boot.
+
+However, not all Secure Boot variable changes produce new PCR measurements. Many UEFI implementations measure only the effective Secure Boot state (e.g., SecureBootEnabled, SetupMode) rather than the raw contents of PK/KEK/DB. If the system returns to the same effective Secure Boot state after the change, the resulting PCR values may match the previous ones, and BitLocker will not prompt for recovery.
+
+Additionally, once Windows completes a successful boot after a Secure Boot change, it may automatically re‑seal the BitLocker key to the new PCR profile. Subsequent reboots will then proceed without a recovery prompt.
+
+In short: Secure Boot variable changes can trigger BitLocker recovery, but whether they do depends on the firmware’s PCR measurement behavior and whether Windows has already re‑sealed the TPM key.
 
 **What to expect:**
 
@@ -133,13 +141,13 @@ See [ROADMAP.md](ROADMAP.md) for the full breakdown. The short version:
 
 ## Image Size
 
-The raw `sb-enema.img` is ~80 MiB, yet it compresses to ~20 MiB. This is normal and intentional.
+The raw `sb-enema.img` is ~140 MiB, yet it compresses to ~20 MiB. This is normal and intentional.
 
 GPT disk images have fixed-size partitions. Both the EFI System Partition and the data partition are pre-allocated to a known size so that `dd` and Rufus can write the image directly to any USB stick without resizing. Unused space within each partition is zero-filled, which compresses extremely well.
 
 | Partition | Raw size | Typical content |
 |---|---|---|
-| EFI System (`boot.vfat`) | 48 MiB | `BOOTX64.EFI` (kernel, ~12 MiB) + `rootfs.cpio.gz` (~15 MiB) |
+| EFI System (`boot.vfat`) | 100 MiB | `BOOTX64.EFI` (kernel, ~12 MiB) + `rootfs.cpio.gz` (~15 MiB) |
 | Data (`SB-ENEMA`) | 32 MiB | Secureboot payloads, generated keys, logs |
 
 **Override partition sizes at build time:**
@@ -165,9 +173,9 @@ git clone --recursive https://github.com/mcfbytes/sb-enema.git
 cd sb-enema
 
 # Build (requires: curl, openssl, mkfs.fat, rsync, sudo, python3-venv)
-make images
+make dist
 
-# Output lands in output/br-out/images/sb-enema.img
+# Output lands in dist/sb-enema.img
 ```
 
 ## Flashing
