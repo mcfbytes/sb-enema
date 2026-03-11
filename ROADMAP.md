@@ -23,18 +23,19 @@ The minimum feature set for a tool that doesn't embarrass us.
 
 ### Safety Guardrails
 
-- Refuse PK replacement outside Setup Mode
-- Preview all changes before applying
-- Log every action to the USB drive
-- Store generated PK private keys on the exFAT partition with clear backup instructions
+- [x] Refuse PK replacement outside Setup Mode
+- [x] Preview all changes before applying
+- [x] Log every action to the USB drive
+- [x] Store generated PK private keys on the exFAT partition with clear backup instructions
 
 ## Stretch Goals
 
 Nice-to-have features that would make this tool genuinely impressive but aren't blocking 1.0.
 
 - Extract PK/KEK/db from vendor firmware images (UEFI capsule parsing)
-- Compare firmware-embedded defaults vs current NVRAM values
-- Detect mismatched or placeholder PKDefault/KEKDefault/dbDefault
+- [x] Compare firmware-embedded defaults vs current NVRAM values
+- [x] Detect mismatched or placeholder PKDefault/KEKDefault/dbDefault
+- [x] Restore recognized vendor OEM certs from firmware-preserved `KEKDefault`/`dbDefault` variables (filtered against Microsoft's `kek_update_map.json`)
 - Generate a reproducible Secure Boot provisioning bundle (same inputs → same outputs)
 - Export a JSON report for audit or support purposes
 

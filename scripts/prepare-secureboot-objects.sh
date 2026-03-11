@@ -80,4 +80,14 @@ else
     echo "Warning: ${FIRMWARE_DIR} not found; Microsoft PK Recovery Mode payloads will not be available" >&2
 fi
 
+# Copy kek_update_map.json for runtime vendor cert filtering in stage_bios_entries().
+# Used to match KEKDefault/dbDefault certs against known legitimate vendor PKs.
+KEK_UPDATE_MAP="${SUBMODULE}/PostSignedObjects/KEK/kek_update_map.json"
+if [ -f "${KEK_UPDATE_MAP}" ]; then
+    cp "${KEK_UPDATE_MAP}" "${STAGING_DIR}/sb-enema/kek_update_map.json"
+    echo "Staged kek_update_map.json in ${STAGING_DIR}/sb-enema/"
+else
+    echo "Warning: ${KEK_UPDATE_MAP} not found; stage_bios_entries vendor filtering will be unavailable" >&2
+fi
+
 echo "Prepared secure boot artifacts in ${ARTIFACT_DIR} and staged content in ${STAGING_DIR}"

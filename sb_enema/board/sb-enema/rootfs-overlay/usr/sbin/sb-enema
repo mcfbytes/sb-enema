@@ -72,7 +72,7 @@ show_menu() {
     echo -e "${BOLD}   Quick Actions${RESET}"
     echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
     echo "  [1]  View Secure Boot report"
-    echo "  [2]  Full Colonic — User PK/KEK + Microsoft db/dbx + BIOS entries → enroll"
+    echo "  [2]  Full Colonic — User PK/KEK + Microsoft db/dbx → enroll"
     echo "  [3]  Microsoft Colonic — Microsoft PK/KEK/db/dbx → enroll"
     echo "  [4]  Microsoft Suppository — Add missing Microsoft KEK/db/dbx (keep PK) → enroll"
     echo
@@ -83,7 +83,7 @@ show_menu() {
     echo "  [6]  Stage Microsoft KEK, DB, DBX"
     echo "  [7]  Stage User-generated PK & KEK"
     echo "  [8]  Stage User-generated KEK, DB"
-    echo "  [9]  Stage BIOS entries (unknown KEK/db/dbx certs from firmware)"
+    echo "  [9]  Stage vendor default entries (KEKDefault/dbDefault certs, vendor filter applied)"
     echo "  [10] Show staged delta (what will change)"
     echo "  [11] Clear staging area"
     echo "  [12] Apply staged changes (enroll)"
@@ -105,13 +105,13 @@ handle_option_1() {
 }
 
 # ---------------------------------------------------------------------------
-# handle_full_colonic() — User PK/KEK + Microsoft db/dbx + BIOS entries
+# handle_full_colonic() — User PK/KEK + Microsoft db/dbx
 # [2] Full Colonic
 # ---------------------------------------------------------------------------
 handle_full_colonic() {
     log_info "Menu selection: Full Colonic"
     echo
-    echo -e "${BOLD}Full Colonic — User PK/KEK + Microsoft db/dbx + BIOS entries${RESET}"
+    echo -e "${BOLD}Full Colonic — User PK/KEK + Microsoft db/dbx${RESET}"
     echo
 
     stage_clear || { log_error "Failed to clear staging area"; return 1; }
@@ -121,8 +121,6 @@ handle_full_colonic() {
     stage_user_pk_kek || { log_error "Failed to stage user PK/KEK"; return 1; }
 
     stage_microsoft_kek_db_dbx || { log_error "Failed to stage Microsoft KEK/DB/DBX"; return 1; }
-
-    stage_bios_entries || { log_error "Failed to stage BIOS entries"; return 1; }
 
     # Rebuild db.auth fresh from all staged db certs, signed by user KEK.
     # stage_microsoft_kek_db_dbx copies the pre-signed MS db.auth which has a
@@ -235,13 +233,13 @@ handle_stage_user_kek_db() {
 }
 
 # ---------------------------------------------------------------------------
-# handle_stage_bios_entries() — Stage BIOS entries
+# handle_stage_bios_entries() — Stage vendor default entries
 # [9]
 # ---------------------------------------------------------------------------
 handle_stage_bios_entries() {
-    log_info "Menu selection: Stage BIOS entries"
+    log_info "Menu selection: Stage vendor default entries"
     echo
-    stage_bios_entries || { log_error "Failed to stage BIOS entries"; return 1; }
+    stage_bios_entries || { log_error "Failed to stage vendor default entries"; return 1; }
     stage_show
 }
 
@@ -459,14 +457,14 @@ run_cli_mode() {
             echo >&2
             echo "Operations:" >&2
             echo "  report                  View Secure Boot report" >&2
-            echo "  full-colonic            User PK/KEK + Microsoft db/dbx + BIOS entries" >&2
+            echo "  full-colonic            User PK/KEK + Microsoft db/dbx" >&2
             echo "  microsoft-colonic       Microsoft PK/KEK/db/dbx enrollment" >&2
             echo "  microsoft-suppository   Add missing Microsoft KEK/db/dbx (keep PK)" >&2
             echo "  stage-microsoft-pk      Stage Microsoft PK" >&2
             echo "  stage-microsoft-kek-db-dbx  Stage Microsoft KEK, DB, DBX" >&2
             echo "  stage-user-pk-kek       Stage user-generated PK & KEK" >&2
             echo "  stage-user-kek-db       Stage user-generated KEK, DB" >&2
-            echo "  stage-bios-entries      Stage unknown BIOS entries" >&2
+            echo "  stage-bios-entries      Stage recognized vendor KEKDefault/dbDefault entries" >&2
             echo "  show-delta              Show staged delta" >&2
             echo "  clear-staging           Clear staging area" >&2
             echo "  apply                   Apply staged changes" >&2
