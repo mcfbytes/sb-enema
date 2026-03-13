@@ -26,7 +26,7 @@ A bootable USB image that audits, repairs, and re-provisions your UEFI Secure Bo
 
 Read this before doing anything. Seriously.
 
-- **Changing PK/KEK/db/dbx _will_ trigger BitLocker recovery.** Back up your BitLocker recovery key first. If you don't have it, stop here and go find it.
+- **Changing PK/KEK/db/dbx _[will*](#bitlocker-tpm-and-why-this-matters)_ trigger BitLocker recovery.** Back up your BitLocker recovery key first. If you don't have it, stop here and go find it.
 - **Credential Guard / VBS** may temporarily disable until the next reboot + re-attestation. This is expected.
 - **OEM Secure Boot functionality** (vendor-specific features, OEM recovery partitions signed with vendor keys) may break unless you preserve the OEM KEK/db entries. Enthusiast motherboards almost never rely on these.
 - **All changes are reversible** via your BIOS "Restore Factory Keys" option. If anything goes sideways, that's your escape hatch.
@@ -241,7 +241,7 @@ This is a [Buildroot](https://buildroot.org/)-based project that builds a minima
 1. Pulls Microsoft's `secureboot_objects` repo (templates, scripts, pre-signed objects)
 2. Generates firmware payloads (PK/KEK/db/dbx) using Microsoft's Python tooling
 3. Packages everything into a hybrid GPT image with:
-   - FAT32 EFI boot partition (GRUB, kernel, initramfs)
+   - FAT32 EFI boot partition (kernel, initramfs)
    - FAT32 data partition (certs, payloads, logs, generated private keys)
 
 At runtime:
