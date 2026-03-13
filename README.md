@@ -87,12 +87,11 @@ This is what ships on most consumer motherboards. The vendor controls the Platfo
 ```mermaid
 flowchart LR
    subgraph SB["Secure Boot Variables (Microsoft-owned state)"]
-      PK["MS Platform Key (PK)"]
+      PK["Windows OEM Devices PK"]
 
       subgraph KEK["KEK Certificates"]
          direction RL
 
-         KEK2[Microsoft Corporation KEK CA 2011]
          KEK3[Microsoft Corporation KEK 2K CA 2023]
       end
 
@@ -100,8 +99,9 @@ flowchart LR
          direction RL
 
          DB2[Microsoft Corporation UEFI CA 2011]
-         DB3[Microsoft Windows Production PCA 2011]
          DB4[Windows UEFI CA 2023]
+         DB5[Microsoft UEFI CA 2023]
+         DB6[Microsoft Option ROM UEFI CA 2023]
       end
 
       subgraph DBX["DBX Hashes"]
