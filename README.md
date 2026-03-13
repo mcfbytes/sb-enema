@@ -38,24 +38,134 @@ There are three Secure Boot ownership models you'll encounter in the wild. Under
 
 ### Vendor-Owned (the default for consumer boards)
 
+```mermaid
+flowchart LR
+   subgraph SB["Secure Boot Variables (Vendor-owned state)"]
+      PK["OEM Platform Key (PK)"]
+
+      subgraph KEK["KEK Certificates"]
+         direction RL
+
+         KEK1[OEM KEK Cert]
+         KEK2[Microsoft Corporation KEK CA 2011]
+         KEK3[Microsoft Corporation KEK 2K CA 2023]
+      end
+
+      subgraph DB["DB Certificates"]
+         direction RL
+
+         DB1[OEM DB Cert]
+         DB2[Microsoft Corporation UEFI CA 2011]
+         DB3[Microsoft Windows Production PCA 2011]
+         DB4[Windows UEFI CA 2023]
+      end
+
+      subgraph DBX["DBX Hashes"]
+         DBX1[Disallowed DBX]
+      end
+   end
+
+   PK -->|authorizes| KEK
+   KEK -->|authorizes| DB
+   KEK -->|authorizes| DBX
+
+   subgraph BL[Bootloader]
+      OS[Windows Bootloader]
+      SHIM[MS shim Bootloader]
+      BAD[Revoked binaries]
+   end
+
+   DB -->|signs, allows| BL
+   DBX -->|blocks| BAD
 ```
-Vendor PK → Vendor KEK → Microsoft KEK → DB/DBX
-```
+
 
 This is what ships on most consumer motherboards. The vendor controls the Platform Key. Microsoft's KEK is included so Windows and WHQL drivers work. In theory, the vendor updates db/dbx via firmware updates. In practice... well, you're here.
 
 ### Microsoft-Owned (Surface, enterprise, WHCP)
 
-```
-Microsoft PK → Microsoft KEK → Microsoft DB/DBX
+```mermaid
+flowchart LR
+   subgraph SB["Secure Boot Variables (Microsoft-owned state)"]
+      PK["OEM Platform Key (PK)"]
+
+      subgraph KEK["KEK Certificates"]
+         direction RL
+
+         KEK2[Microsoft Corporation KEK CA 2011]
+         KEK3[Microsoft Corporation KEK 2K CA 2023]
+      end
+
+      subgraph DB["DB Certificates"]
+         direction RL
+
+         DB2[Microsoft Corporation UEFI CA 2011]
+         DB3[Microsoft Windows Production PCA 2011]
+         DB4[Windows UEFI CA 2023]
+      end
+
+      subgraph DBX["DBX Hashes"]
+         DBX1[Disallowed DBX]
+      end
+   end
+
+   PK -->|authorizes| KEK
+   KEK -->|authorizes| DB
+   KEK -->|authorizes| DBX
+
+   subgraph BL[Bootloader]
+      OS[Windows Bootloader]
+      SHIM[MS shim Bootloader]
+      BAD[Revoked binaries]
+   end
+
+   DB -->|signs, allows| BL
+   DBX -->|blocks| BAD
 ```
 
 Used on Surface devices, Windows RT, WHCP test devices, and enterprise-managed hardware. Microsoft controls the whole chain. You probably don't have this unless you bought your machine from Microsoft or your IT department set it up.
 
 ### Custom-Owned (enthusiasts, security nerds)
 
-```
-User PK → User KEK → Microsoft DB/DBX
+```mermaid
+flowchart LR
+   subgraph SB["Secure Boot Variables (User-owned state)"]
+      PK["User-generated Platform Key (PK)"]
+
+      subgraph KEK["KEK Certificates"]
+         direction RL
+
+         KEK1[User-generated KEK]
+         KEK2[Microsoft Corporation KEK CA 2011]
+         KEK3[Microsoft Corporation KEK 2K CA 2023]
+      end
+
+      subgraph DB["DB Certificates"]
+         direction RL
+
+         DB1[User-generated Cert]
+         DB2[Microsoft Corporation UEFI CA 2011]
+         DB3[Microsoft Windows Production PCA 2011]
+         DB4[Windows UEFI CA 2023]
+      end
+
+      subgraph DBX["DBX Hashes"]
+         DBX1[Disallowed DBX]
+      end
+   end
+
+   PK -->|authorizes| KEK
+   KEK -->|authorizes| DB
+   KEK -->|authorizes| DBX
+
+   subgraph BL[Bootloader]
+      OS[Windows Bootloader]
+      SHIM[MS shim Bootloader]
+      BAD[Revoked binaries]
+   end
+
+   DB -->|signs, allows| BL
+   DBX -->|blocks| BAD
 ```
 
 You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your KEK so Windows, WHQL drivers, and the UEFI shim bootloader still work. This gives you deterministic control over what boots on your hardware.
