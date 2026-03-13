@@ -87,7 +87,7 @@ This is what ships on most consumer motherboards. The vendor controls the Platfo
 ```mermaid
 flowchart LR
    subgraph SB["Secure Boot Variables (Microsoft-owned state)"]
-      PK["OEM Platform Key (PK)"]
+      PK["MS Platform Key (PK)"]
 
       subgraph KEK["KEK Certificates"]
          direction RL
