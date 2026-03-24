@@ -102,7 +102,7 @@ jobs:
         run: mkdir -p ${{ github.workspace }}/sbom
       
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0.23.1
+        uses: anchore/sbom-action@v0.24.0
         with:
           path: output/br-out/target/
           format: spdx-json
