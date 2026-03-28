@@ -34,6 +34,14 @@ MSFT_PAYLOADS_SUBDIR="${PAYLOAD_DIR}/microsoft"
 MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 
 # ---------------------------------------------------------------------------
+# SHA-256 fingerprints of legacy Microsoft certificates excluded from the
+# Custom-Owned (user-key) enrollment path.  Both are expiring in 2026 and
+# are superseded by their 2023 counterparts.
+# ---------------------------------------------------------------------------
+readonly _STAGE_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
+readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
+
+# ---------------------------------------------------------------------------
 # Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
 # Populated at build time by prepare-secureboot-objects.sh from the
 # third_party/secureboot_objects submodule (PostSignedObjects/KEK/).
@@ -310,6 +318,18 @@ stage_microsoft_kek_db_dbx() {
 }
 
 # ---------------------------------------------------------------------------
+# _stage_cert_fp <pem_file>
+#   Print the SHA-256 fingerprint of a PEM certificate as lowercase hex
+#   without colons.  Returns an empty string on error.
+# ---------------------------------------------------------------------------
+_stage_cert_fp() {
+    [[ -f "$1" && -r "$1" ]] || return 0
+    openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null \
+        | sed 's/.*Fingerprint=//;s/://g' \
+        | tr '[:upper:]' '[:lower:]'
+}
+
+# ---------------------------------------------------------------------------
 # _stage_build_kek_esl <workdir> <kek_crt> <owner_guid>
 #   Internal helper: combine user KEK + Microsoft KEK + any vendor-staged KEK
 #   certificates into a single ESL at <workdir>/KEK.esl.
@@ -351,6 +371,17 @@ _stage_build_kek_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
+            # Exclude legacy Microsoft Corporation KEK CA 2011 from Custom-Owned
+            # enrollments.  The 2023 replacement (KEK 2K CA 2023) is the current
+            # recommended KEK for all new provisioning.
+            local cert_fp
+            cert_fp=$(_stage_cert_fp "${cert_pem}")
+            if [[ -z "${cert_fp}" ]]; then
+                log_warn "Could not compute fingerprint for KEK cert $(basename "${cert_file}"); including it"
+            elif [[ "${cert_fp}" == "${_STAGE_MS_KEK_CA_2011_FP}" ]]; then
+                log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
+                continue
+            fi
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added Microsoft KEK certificate: $(basename "${cert_file}")"
@@ -414,6 +445,19 @@ _stage_build_db_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
+            # Exclude legacy Microsoft Windows Production PCA 2011 from Custom-Owned
+            # db enrollments.  This PCA is superseded by Windows UEFI CA 2023 and is
+            # not a UEFI Secure Boot certificate.  The 2023 replacement certificates
+            # (Microsoft UEFI CA 2023, Microsoft Option ROM UEFI CA 2023) are present
+            # in PreSignedObjects and will be included via this same loop.
+            local cert_fp
+            cert_fp=$(_stage_cert_fp "${cert_pem}")
+            if [[ -z "${cert_fp}" ]]; then
+                log_warn "Could not compute fingerprint for db cert $(basename "${cert_file}"); including it"
+            elif [[ "${cert_fp}" == "${_STAGE_MS_WIN_PCA_2011_FP}" ]]; then
+                log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
+                continue
+            fi
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added db certificate: $(basename "${cert_file}")"
