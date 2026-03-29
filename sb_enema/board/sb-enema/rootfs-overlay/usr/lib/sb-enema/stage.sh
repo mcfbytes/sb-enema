@@ -323,10 +323,26 @@ stage_microsoft_kek_db_dbx() {
 #   without colons.  Returns an empty string on error.
 # ---------------------------------------------------------------------------
 _stage_cert_fp() {
-    [[ -f "$1" && -r "$1" ]] || return 0
-    openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null \
-        | sed 's/.*Fingerprint=//;s/://g' \
-        | tr '[:upper:]' '[:lower:]'
+    local cert="$1"
+
+    [[ -f "$cert" && -r "$cert" ]] || return 0
+
+    local fp
+    if ! fp="$(
+        (
+            # Disable errexit and pipefail in this subshell so failures in the
+            # pipeline do not abort the whole script. On any error, the command
+            # substitution will fail and we return success with empty output.
+            set +e +o pipefail
+            openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
+                | sed 's/.*Fingerprint=//;s/://g' \
+                | tr '[:upper:]' '[:lower:]'
+        )
+    )"; then
+        return 0
+    fi
+
+    printf '%s\n' "$fp"
 }
 
 # ---------------------------------------------------------------------------
