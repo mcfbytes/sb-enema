@@ -332,8 +332,8 @@ audit_db() {
     done
 
     if [[ "${has_win_pca_2011}" != "yes" ]]; then
-        _audit_add_finding "WARNING" "${component}" \
-            "Microsoft Windows Production PCA 2011 not found in db"
+        _audit_add_finding "INFO" "${component}" \
+            "Microsoft Windows Production PCA 2011 not in db (expected absent in current provisioning)"
     fi
 
     if [[ "${has_any_2023}" == "yes" ]]; then
