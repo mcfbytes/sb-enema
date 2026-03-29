@@ -136,7 +136,6 @@ flowchart LR
          direction RL
 
          KEK1[User-generated KEK]
-         KEK2[Microsoft Corporation KEK CA 2011]
          KEK3[Microsoft Corporation KEK 2K CA 2023]
       end
 
@@ -145,8 +144,9 @@ flowchart LR
 
          DB1[User-generated Cert]
          DB2[Microsoft Corporation UEFI CA 2011]
-         DB3[Microsoft Windows Production PCA 2011]
          DB4[Windows UEFI CA 2023]
+         DB5[Microsoft UEFI CA 2023]
+         DB6[Microsoft Option ROM UEFI CA 2023]
       end
 
       subgraph DBX["DBX Hashes"]
