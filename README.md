@@ -56,8 +56,9 @@ flowchart LR
 
          DB1[OEM DB Cert]
          DB2[Microsoft Corporation UEFI CA 2011]
-         DB3[Microsoft Windows Production PCA 2011]
          DB4[Windows UEFI CA 2023]
+         DB5[Microsoft UEFI CA 2023]
+         DB6[Microsoft Option ROM UEFI CA 2023]
       end
 
       subgraph DBX["DBX Hashes"]
