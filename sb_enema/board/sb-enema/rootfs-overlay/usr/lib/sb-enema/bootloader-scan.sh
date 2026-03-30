@@ -97,12 +97,13 @@ _bscan_umount_esp() {
 # ---------------------------------------------------------------------------
 # _bscan_windows_efi_binaries <esp_mount>
 #   Print a newline-separated list of Windows EFI binary paths found on the
-#   mounted ESP and on any NTFS partitions on the same disk.
+#   mounted ESP.  Only ESP-resident binaries are checked; Windows/System32
+#   files (winload.efi, hvloader.efi) are not Secure Boot variable signers
+#   and are intentionally excluded.
 # ---------------------------------------------------------------------------
 _bscan_windows_efi_binaries() {
     local esp_mount="$1"
 
-    # Well-known ESP-resident Windows binaries
     local f
     for f in \
         "${esp_mount}/EFI/Microsoft/Boot/bootmgfw.efi" \
@@ -110,42 +111,6 @@ _bscan_windows_efi_binaries() {
         "${esp_mount}/EFI/Microsoft/Boot/memtest.efi"; do
         [[ -f "${f}" ]] && echo "${f}"
     done
-
-    # Discover the parent disk of the ESP so we can find the Windows partition
-    local esp_dev
-    esp_dev=$(findmnt -n -o SOURCE "${esp_mount}" 2>/dev/null) || esp_dev=""
-    [[ -z "${esp_dev}" ]] && return 0
-
-    local parent_disk
-    parent_disk=$(lsblk -no PKNAME "${esp_dev}" 2>/dev/null | head -n1) || parent_disk=""
-    [[ -z "${parent_disk}" ]] && return 0
-
-    local ntfs_tmpdir
-    ntfs_tmpdir=$(mktemp -d) || return 0
-    # shellcheck disable=SC2064
-    trap "umount '${ntfs_tmpdir}' 2>/dev/null || true; rm -rf '${ntfs_tmpdir}'" RETURN
-
-    local name fstype
-    while IFS=" " read -r name fstype; do
-        [[ "${fstype,,}" == "ntfs3" ]] || [[ "${fstype,,}" == "ntfs" ]] || continue
-        local ntfs_dev="/dev/${name}"
-
-        # Try ntfs3 first (in-tree read-only driver), fall back to ntfs.
-        # Unmount before retry to avoid "already mounted" errors if ntfs3
-        # partially initialises the mount point before returning non-zero.
-        if ! mount -t ntfs3 -o ro,noatime "${ntfs_dev}" "${ntfs_tmpdir}" 2>/dev/null; then
-            umount "${ntfs_tmpdir}" 2>/dev/null || true
-            mount -t ntfs -o ro,noatime "${ntfs_dev}" "${ntfs_tmpdir}" 2>/dev/null || continue
-        fi
-
-        for f in \
-            "${ntfs_tmpdir}/Windows/System32/winload.efi" \
-            "${ntfs_tmpdir}/Windows/System32/hvloader.efi"; do
-            [[ -f "${f}" ]] && echo "${f}"
-        done
-
-        umount "${ntfs_tmpdir}" 2>/dev/null || true
-    done < <(lsblk -lno NAME,FSTYPE "/dev/${parent_disk}" 2>/dev/null)
 }
 
 # ---------------------------------------------------------------------------
