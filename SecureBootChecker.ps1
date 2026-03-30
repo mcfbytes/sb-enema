@@ -470,12 +470,16 @@ function Get-EspMountPoint {
 # ---------------------------------------------------------------------------
 # Get-WindowsBootloaderPaths
 #   Returns an array of [pscustomobject]@{Path; Description} for Windows EFI
-#   bootloader binaries that actually exist on the system.
+#   bootloader binaries on the EFI System Partition that actually exist.
+#   System32 binaries (winload.efi, hvloader.efi, winresume.efi) are excluded
+#   because they are loaded after Secure Boot policy has already been enforced
+#   and are not directly relevant to the Secure Boot variable CA check.
 # ---------------------------------------------------------------------------
 function Get-WindowsBootloaderPaths {
     <#
     .SYNOPSIS
-    Returns existing Windows EFI bootloader paths from the ESP and System32.
+    Returns existing Windows EFI bootloader paths from the ESP (ESP-only;
+    System32 binaries are excluded as they are not Secure Boot CA-relevant).
     #>
     param([string]$EspDriveLetter)
 
@@ -483,9 +487,6 @@ function Get-WindowsBootloaderPaths {
         @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\bootmgfw.efi"; Description = "Windows Boot Manager" }
         @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\bootmgr.efi";  Description = "Legacy Boot Manager" }
         @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\memtest.efi";  Description = "Memory Diagnostic" }
-        @{ Path = "$env:SystemRoot\System32\winload.efi";             Description = "Windows OS Loader" }
-        @{ Path = "$env:SystemRoot\System32\hvloader.efi";            Description = "Hyper-V Loader" }
-        @{ Path = "$env:SystemRoot\System32\winresume.efi";           Description = "Windows Resume" }
     )
 
     $results = @()
