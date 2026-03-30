@@ -18,6 +18,8 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/log.sh"
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/efivar.sh"
 # shellcheck source=certdb.sh
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/certdb.sh"
+# shellcheck source=bootloader-scan.sh
+source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/bootloader-scan.sh"
 
 # ---------------------------------------------------------------------------
 # Global findings arrays
@@ -392,6 +394,33 @@ audit_dbx() {
 }
 
 # ---------------------------------------------------------------------------
+# audit_bootloader_chain_ca() — Check EFI bootloader signing CA.
+#   Calls the bootloader scanner to determine whether PCA 2011 is still in
+#   use, and records the result as an audit finding.
+# ---------------------------------------------------------------------------
+audit_bootloader_chain_ca() {
+    local component="bootloader"
+
+    # Guard is handled by _SB_ENEMA_BOOTLOADER_SCAN_SH; source already done.
+    bootloader_scan_pca2011_in_use || true
+
+    case "${BSCAN_VERDICT:-}" in
+        CLEAR)
+            _audit_add_finding "INFO" "${component}" \
+                "All detected bootloaders signed by post-2023 Microsoft CA — DBX2024 safe to apply"
+            ;;
+        PCA2011_IN_USE)
+            _audit_add_finding "HIGH" "${component}" \
+                "One or more bootloaders still signed by Microsoft Windows Production PCA 2011 — update Windows before applying DBX2024"
+            ;;
+        *)
+            _audit_add_finding "WARNING" "${component}" \
+                "Bootloader CA scan failed or found no EFI binaries — DBX2024 applicability unknown"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # audit_2026_ready() — Composite readiness check.
 #   Calls audit_pk, audit_kek, audit_db, and audit_dbx, then evaluates
 #   whether the system meets the requirements for the 2026 Secure Boot
@@ -436,6 +465,9 @@ audit_run_all() {
 
     # Run composite check (which calls all individual audit functions)
     audit_2026_ready
+
+    # Run bootloader CA scan (after db audit, as it is supplemental)
+    audit_bootloader_chain_ca
 
     # Sort findings by severity
     _audit_sort_findings

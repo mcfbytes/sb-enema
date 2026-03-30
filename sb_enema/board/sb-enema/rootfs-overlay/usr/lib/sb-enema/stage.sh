@@ -24,6 +24,8 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/update.sh"
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/preview.sh"
 # shellcheck source=keygen.sh
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/keygen.sh"
+# shellcheck source=bootloader-scan.sh
+source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/bootloader-scan.sh"
 
 # ---------------------------------------------------------------------------
 # Pre-signed Microsoft .auth payload directory (read-only, from build time)
@@ -40,6 +42,12 @@ MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 # ---------------------------------------------------------------------------
 readonly _STAGE_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
 readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
+
+# ---------------------------------------------------------------------------
+# SHA-256 fingerprint of the PCA 2011 CA cert in DBX2024.
+# Kept in sync with _BSCAN_MS_WIN_PCA_2011 in bootloader-scan.sh.
+# ---------------------------------------------------------------------------
+readonly _STAGE_DBX2024_PCA2011_CA_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
 
 # ---------------------------------------------------------------------------
 # Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
@@ -990,4 +998,204 @@ stage_bios_entries() {
     else
         log_info "User keys/certs not yet generated; skipping auth payload rebuild (run keygen first, then re-stage)"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# stage_dbx_with_pca2011_check()
+#   Scan installed EFI bootloaders for PCA 2011 usage before deciding
+#   whether to include the DBX2024 optional CA-revocation payload.
+#
+#   SAFE-FAIL BEHAVIOUR: any scan error causes DBX2024 to be retained
+#   (PCA 2011 is NOT revoked).  Only a clean CLEAR verdict allows exclusion.
+#
+#   Sets the exported variable STAGE_DBX2024_APPLIED to "yes" or "no".
+# ---------------------------------------------------------------------------
+stage_dbx_with_pca2011_check() {
+    log_info "Running EFI bootloader CA scan to determine DBX2024 applicability…"
+
+    bootloader_scan_pca2011_in_use || true
+    bootloader_scan_log_summary
+
+    # Safe-fail default: exclude DBX2024 unless scan explicitly clears all binaries.
+    if [[ "${BSCAN_VERDICT:-}" != "CLEAR" ]]; then
+        # PCA2011_IN_USE or SCAN_FAILED — exclude DBX2024 from the staged dbx.
+        log_info "DBX2024 PCA 2011 CA revocation will be EXCLUDED from dbx staging."
+        STAGE_DBX2024_APPLIED="no"
+        export STAGE_DBX2024_APPLIED
+
+        # Filter the staged raw ESL to remove the PCA 2011 CA hash entry, then
+        # re-sign to produce a fresh dbx.auth.
+        local esl_path="${PAYLOAD_DIR}/dbx/dbx.esl"
+        if [[ ! -f "${esl_path}" ]] || [[ ! -s "${esl_path}" ]]; then
+            log_warn "No staged dbx.esl found; cannot filter DBX2024 entry — leaving dbx.auth as-is"
+            _stage_warn_dbx2024_not_applied
+            return 0
+        fi
+
+        local workdir
+        workdir=$(mktemp -d) || { log_error "Failed to create workdir for DBX2024 filtering"; _stage_warn_dbx2024_not_applied; return 0; }
+        # shellcheck disable=SC2064
+        trap "rm -rf '${workdir}'" RETURN
+
+        local filtered_esl="${workdir}/dbx-filtered.esl"
+        if ! _stage_filter_pca2011_from_esl "${esl_path}" "${filtered_esl}"; then
+            log_warn "DBX2024 entry filtering failed; leaving dbx.auth unchanged"
+            _stage_warn_dbx2024_not_applied
+            return 0
+        fi
+
+        # Log size delta and overwrite the staged raw ESL for the preview engine
+        local orig_size filtered_size
+        orig_size=$(wc -c < "${esl_path}")
+        filtered_size=$(wc -c < "${filtered_esl}")
+        log_info "dbx.esl filtered: ${orig_size} → ${filtered_size} bytes (removed PCA 2011 CA entry)"
+        cp "${filtered_esl}" "${esl_path}"
+
+        # Re-sign with user KEK if available.  The Microsoft pre-signed path
+        # does not have user keys; on that path DBX2024 cannot be excluded and
+        # a warning is emitted so the operator knows to use the user-keyed path
+        # or update Windows before enrolling.
+        local kek_key="${KEYS_DIR:-}/KEK.key"
+        local kek_crt="${KEYS_DIR:-}/KEK.crt"
+        if [[ -f "${kek_key}" ]] && [[ -f "${kek_crt}" ]]; then
+            local owner_guid
+            owner_guid=$(keygen_load_or_generate_guid)
+            sign-efi-sig-list -g "${owner_guid}" \
+                -k "${kek_key}" -c "${kek_crt}" \
+                dbx "${filtered_esl}" "${PAYLOAD_DIR}/dbx.auth" || {
+                log_warn "Re-signing filtered dbx.auth failed; leaving previous dbx.auth in place"
+            }
+            local sha256
+            sha256=$(sha256sum "${PAYLOAD_DIR}/dbx.auth" | awk '{print $1}')
+            log_action "STAGE" "dbx.auth" "SUCCESS" "DBX2024 excluded, signed by user KEK SHA256=${sha256}"
+        else
+            # No user KEK: the pre-staged microsoft/dbx.auth cannot be re-signed
+            # without the KEK private key, so the full DBX (including DBX2024)
+            # will be enrolled.  Advise the operator to run the user-keyed path
+            # (Full Colonic) after updating Windows, or update Windows first.
+            log_warn "User KEK not available — DBX2024 cannot be excluded on the Microsoft pre-signed path. Use the Full Colonic (user-keyed) path after updating Windows to avoid revoking PCA 2011."
+        fi
+
+        _stage_warn_dbx2024_not_applied
+        return 0
+    fi
+
+    # CLEAR — DBX2024 is already part of the full dbx ESL staged by
+    # stage_microsoft_kek_db_dbx / _stage_build_dbx_payload; nothing more to do.
+    log_info "DBX2024 PCA 2011 CA revocation will be included in dbx staging."
+    STAGE_DBX2024_APPLIED="yes"
+    export STAGE_DBX2024_APPLIED
+    return 0
+}
+# ---------------------------------------------------------------------------
+# _stage_warn_dbx2024_not_applied()
+#   Emit a prominent console warning that DBX2024 was not applied.
+# ---------------------------------------------------------------------------
+_stage_warn_dbx2024_not_applied() {
+    echo -e "${YELLOW}⚠  DBX2024 (PCA 2011 CA revocation) was NOT applied.${RESET}"
+    echo -e "${YELLOW}   Update Windows via Windows Update (KB5062710) and re-run SB-ENEMA${RESET}"
+    echo -e "${YELLOW}   after the new Windows UEFI CA 2023 signed bootloader is installed.${RESET}"
+}
+
+# ---------------------------------------------------------------------------
+# _stage_filter_pca2011_from_esl <input_esl> <output_esl>
+#   Parse a raw EFI Signature List and write a copy to <output_esl> with any
+#   EFI_SIGNATURE_DATA entries whose SHA-256 hash matches
+#   _STAGE_DBX2024_PCA2011_CA_FP removed.
+#
+#   EFI Signature List structure (all fields little-endian):
+#     Offset  Size  Field
+#        0     16   SignatureType (GUID)
+#        16     4   SignatureListSize (uint32)
+#        20     4   SignatureHeaderSize (uint32)
+#        24     4   SignatureSize (uint32)   — size of one SignatureData entry incl. 16-byte owner GUID
+#        28    SHS  SignatureHeader (variable, typically 0 bytes)
+#        28+SHS    N * SZ  SignatureData entries
+#
+#   For SHA-256 hash entries (SignatureType = EFI_CERT_SHA256_GUID):
+#     SignatureSize = 48 (16-byte owner GUID + 32-byte hash)
+#     The 32-byte hash is at offset +16 within each SignatureData entry.
+#
+#   This function only filters SHA-256 signature lists; all other list types
+#   are copied verbatim.
+# ---------------------------------------------------------------------------
+_stage_filter_pca2011_from_esl() {
+    local input="$1"
+    local output="$2"
+
+    # EFI_CERT_SHA256_GUID bytes (little-endian):
+    # {0x26c18cd3,0x11a9,0x4301,{0x8b,0xcf,0x5a,0x3e,0x3b,0x1b,0x8c,0x7b}}
+    # Stored little-endian: D3 8C C1 26 A9 11 01 43 8B CF 5A 3E 3B 1B 8C 7B
+    local sha256_guid_hex="d38cc126a91101438bcf5a3e3b1b8c7b"
+
+    local target_fp="${_STAGE_DBX2024_PCA2011_CA_FP}"
+
+    # Use Python3 for reliable binary parsing; fall back to verbatim copy.
+    if ! command -v python3 >/dev/null 2>&1; then
+        log_warn "python3 not available; cannot filter PCA 2011 entry from dbx ESL — copying verbatim"
+        cp "${input}" "${output}"
+        return 0
+    fi
+
+    python3 - "${input}" "${output}" "${sha256_guid_hex}" "${target_fp}" <<'PYEOF'
+import sys, struct
+
+def le32(b, off): return struct.unpack_from('<I', b, off)[0]
+
+def filter_esl(data, sha256_guid_hex, target_fp_hex):
+    target_hash = bytes.fromhex(target_fp_hex)
+    sha256_guid  = bytes.fromhex(sha256_guid_hex)
+    out = bytearray()
+    offset = 0
+    n = len(data)
+    while offset < n:
+        if offset + 28 > n:
+            out += data[offset:]
+            break
+        guid          = data[offset:offset+16]
+        list_size     = le32(data, offset+16)
+        sig_hdr_size  = le32(data, offset+20)
+        sig_size      = le32(data, offset+24)
+
+        if list_size == 0 or offset + list_size > n:
+            out += data[offset:]
+            break
+
+        list_data = data[offset:offset+list_size]
+
+        if guid != sha256_guid or sig_size != 48:
+            out += list_data
+            offset += list_size
+            continue
+
+        header_end = 28 + sig_hdr_size
+        new_entries = bytearray()
+        ent_off = header_end
+        while ent_off + sig_size <= list_size:
+            entry = list_data[ent_off:ent_off+sig_size]
+            entry_hash = entry[16:48]
+            if entry_hash != target_hash:
+                new_entries += entry
+            ent_off += sig_size
+
+        if not new_entries:
+            offset += list_size
+            continue
+
+        new_list_size = header_end + len(new_entries)
+        new_header = bytearray(list_data[:28])
+        struct.pack_into('<I', new_header, 16, new_list_size)
+        out += new_header + list_data[28:header_end] + new_entries
+        offset += list_size
+
+    return bytes(out)
+
+_, src, dst, sha256_guid_hex, target_fp = sys.argv
+with open(src, 'rb') as f:
+    data = f.read()
+filtered = filter_esl(data, sha256_guid_hex, target_fp)
+with open(dst, 'wb') as f:
+    f.write(filtered)
+sys.exit(0)
+PYEOF
 }

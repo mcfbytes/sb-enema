@@ -20,6 +20,7 @@ source "${LIB_DIR}/update.sh"
 source "${LIB_DIR}/preview.sh"
 source "${LIB_DIR}/keygen.sh"
 source "${LIB_DIR}/stage.sh"
+source "${LIB_DIR}/bootloader-scan.sh"
 source "${LIB_DIR}/enroll.sh"
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,9 @@ show_menu() {
     echo "  [13] Set certificate CN (name prefix)"
     echo "  [14] Restore OEM Defaults — BIOS instructions"
     echo "  [15] Exit"
+    echo
+    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
+    echo "  [B]  Scan bootloader CA certificates"
     echo
 }
 
@@ -177,6 +181,7 @@ handle_microsoft_suppository() {
     stage_clear || { log_error "Failed to clear staging area"; return 1; }
 
     stage_microsoft_kek_db_dbx || { log_error "Failed to stage Microsoft KEK/DB/DBX"; return 1; }
+    stage_dbx_with_pca2011_check || log_warn "DBX staging with PCA 2011 check encountered issues"
 
     enroll || { log_error "Microsoft Suppository enrollment failed"; return 1; }
 
@@ -371,6 +376,19 @@ handle_option_15() {
 }
 
 # ---------------------------------------------------------------------------
+# handle_scan_bootloaders() — Scan bootloader CA certificates
+# [B]
+# ---------------------------------------------------------------------------
+handle_scan_bootloaders() {
+    log_info "Menu selection: Scan bootloader CA certificates"
+    echo
+    echo -e "${BOLD}Scanning EFI bootloader CA certificates…${RESET}"
+    echo
+    bootloader_scan_pca2011_in_use || true
+    bootloader_scan_log_summary
+}
+
+# ---------------------------------------------------------------------------
 # run_menu_loop() — Main interactive menu loop
 # ---------------------------------------------------------------------------
 run_menu_loop() {
@@ -378,7 +396,7 @@ run_menu_loop() {
         show_menu
 
         local choice
-        read -rp "Enter your choice [1-15]: " choice
+        read -rp "Enter your choice [1-15 or B]: " choice
 
         case "${choice}" in
             1)  handle_option_1 ;;
@@ -396,8 +414,9 @@ run_menu_loop() {
             13) handle_set_cert_cn ;;
             14) handle_option_14 ;;
             15) handle_option_15 ;;
+            [Bb]) handle_scan_bootloaders ;;
             *)
-                echo -e "${RED}Invalid choice. Please enter a number between 1 and 15.${RESET}"
+                echo -e "${RED}Invalid choice. Please enter a number between 1 and 15 or B.${RESET}"
                 log_warn "Invalid menu selection: ${choice}"
                 ;;
         esac
@@ -450,6 +469,9 @@ run_cli_mode() {
         restore-instructions)
             handle_option_14
             ;;
+        scan-bootloaders)
+            handle_scan_bootloaders
+            ;;
         *)
             echo -e "${RED}Error: Unknown CLI operation '${operation}'${RESET}" >&2
             echo >&2
@@ -469,6 +491,7 @@ run_cli_mode() {
             echo "  clear-staging           Clear staging area" >&2
             echo "  apply                   Apply staged changes" >&2
             echo "  restore-instructions    Show BIOS factory reset instructions" >&2
+            echo "  scan-bootloaders        Scan EFI bootloader CA certificates" >&2
             echo >&2
             echo "If no operation is specified, the interactive menu is shown." >&2
             exit 1
