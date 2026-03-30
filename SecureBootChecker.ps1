@@ -92,6 +92,8 @@ $script:PkValid      = $false
 $script:PkIsTest     = $false
 $script:DbHas2023    = $false
 $script:DbxCurrent   = $false
+$script:BootloaderPCA2011InUse = $false  # $true if PCA 2011 active in boot chain
+$script:BootloaderScanSkipped  = $false  # $true if scan could not run
 
 function Add-Finding {
     param(
@@ -415,30 +417,352 @@ function Invoke-AuditDbx {
 }
 
 # ---------------------------------------------------------------------------
+# Get-EspMountPoint
+#   Returns the drive letter of the EFI System Partition, mounting it if
+#   needed via mountvol.  Returns a two-element array: [string driveLetter,
+#   bool weDidMount].  Returns $null on any failure; does not throw.
+# ---------------------------------------------------------------------------
+function Get-EspMountPoint {
+    <#
+    .SYNOPSIS
+    Returns the drive letter of the EFI System Partition, mounting it if needed.
+    Returns $null if it cannot be found or mounted.
+    #>
+    try {
+        $partition = Get-Partition -ErrorAction SilentlyContinue |
+            Where-Object { $_.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' } |
+            Select-Object -First 1
+        if ($null -eq $partition) {
+            Write-Verbose "Get-EspMountPoint: no ESP partition found via Get-Partition"
+            return $null
+        }
+
+        # Already has a drive letter
+        if ($partition.DriveLetter -and $partition.DriveLetter -ne "`0") {
+            return @("$($partition.DriveLetter):", $false)
+        }
+
+        # Try to assign a free drive letter using mountvol
+        $letterCode = 68..90 | Where-Object { -not (Test-Path "$([char]$_):\") } | Select-Object -First 1
+        if ($null -eq $letterCode) {
+            Write-Verbose "Get-EspMountPoint: no free drive letters available"
+            return $null
+        }
+        $letter    = [char]$letterCode
+        $letterStr = "${letter}:"
+        $accessPath = ($partition.AccessPaths | Select-Object -First 1)
+        if (-not $accessPath) {
+            Write-Verbose "Get-EspMountPoint: partition has no AccessPaths"
+            return $null
+        }
+        $mountOut = & mountvol "$letterStr\" $accessPath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Verbose "Get-EspMountPoint: mountvol failed (exit $LASTEXITCODE): $mountOut"
+            return $null
+        }
+        return @($letterStr, $true)
+    } catch {
+        Write-Verbose "Get-EspMountPoint: exception: $_"
+        return $null
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Get-WindowsBootloaderPaths
+#   Returns an array of [pscustomobject]@{Path; Description} for Windows EFI
+#   bootloader binaries that actually exist on the system.
+# ---------------------------------------------------------------------------
+function Get-WindowsBootloaderPaths {
+    <#
+    .SYNOPSIS
+    Returns existing Windows EFI bootloader paths from the ESP and System32.
+    #>
+    param([string]$EspDriveLetter)
+
+    $candidates = @(
+        @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\bootmgfw.efi"; Description = "Windows Boot Manager" }
+        @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\bootmgr.efi";  Description = "Legacy Boot Manager" }
+        @{ Path = "$EspDriveLetter\EFI\Microsoft\Boot\memtest.efi";  Description = "Memory Diagnostic" }
+        @{ Path = "$env:SystemRoot\System32\winload.efi";             Description = "Windows OS Loader" }
+        @{ Path = "$env:SystemRoot\System32\hvloader.efi";            Description = "Hyper-V Loader" }
+        @{ Path = "$env:SystemRoot\System32\winresume.efi";           Description = "Windows Resume" }
+    )
+
+    $results = @()
+    foreach ($c in $candidates) {
+        if (Test-Path $c.Path) {
+            $results += [pscustomobject]@{ Path = $c.Path; Description = $c.Description }
+        } else {
+            Write-Verbose "Get-WindowsBootloaderPaths: expected binary not found: $($c.Path)"
+        }
+    }
+    return $results
+}
+
+# ---------------------------------------------------------------------------
+# Get-LinuxBootloaderPaths
+#   Returns an array of [pscustomobject]@{Path; Description} for SHIM / GRUB /
+#   fwupd EFI binaries found on the ESP outside the Microsoft directory.
+# ---------------------------------------------------------------------------
+function Get-LinuxBootloaderPaths {
+    <#
+    .SYNOPSIS
+    Discovers Linux/SHIM EFI bootloader binaries on the ESP (excluding Microsoft).
+    #>
+    param([string]$EspDriveLetter)
+
+    $results = @()
+    try {
+        $efiRoot = "$EspDriveLetter\EFI"
+        if (-not (Test-Path $efiRoot)) { return $results }
+
+        $allEfi = Get-ChildItem -Path $efiRoot -Recurse -Filter "*.efi" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.FullName -notmatch [regex]::Escape("$EspDriveLetter\EFI\Microsoft")
+            }
+
+        $namePatterns = @('shim', 'grub', 'fwupd', 'elilo', 'system-boot')
+        foreach ($file in $allEfi) {
+            $baseLower = $file.BaseName.ToLower()
+            $match = $false
+            foreach ($pat in $namePatterns) {
+                if ($baseLower -like "$pat*" -or $baseLower -eq $pat) {
+                    $match = $true
+                    break
+                }
+            }
+            if ($match) {
+                $results += [pscustomobject]@{ Path = $file.FullName; Description = "Linux/SHIM EFI binary" }
+            }
+        }
+    } catch {
+        Write-Verbose "Get-LinuxBootloaderPaths: exception: $_"
+    }
+    return $results
+}
+
+# ---------------------------------------------------------------------------
+# Get-EfiBinarySignerCAs
+#   Returns an array of X509Certificate2 objects representing all certificates
+#   in the Authenticode signing chain of an EFI binary.  Returns an empty
+#   array on any failure.
+# ---------------------------------------------------------------------------
+function Get-EfiBinarySignerCAs {
+    <#
+    .SYNOPSIS
+    Returns all certificates in the Authenticode signing chain of an EFI binary.
+    Returns an empty array on failure.
+    #>
+    param([string]$FilePath)
+
+    try {
+        $sig = Get-AuthenticodeSignature -FilePath $FilePath -ErrorAction Stop
+        if ($sig.Status -eq 'NotSigned' -or $null -eq $sig.SignerCertificate) {
+            Write-Verbose "Get-EfiBinarySignerCAs: $FilePath is not signed or has no signer certificate"
+            return @()
+        }
+
+        $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+        $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+        $chain.Build($sig.SignerCertificate) | Out-Null
+        return @($chain.ChainElements | ForEach-Object { $_.Certificate })
+    } catch {
+        Write-Verbose "Get-EfiBinarySignerCAs: exception for ${FilePath}: $_"
+        return @()
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Test-SignedByPCA2011
+#   Returns $true  if any cert in the signing chain matches $MS_WIN_PCA_2011.
+#   Returns $false if the chain was inspected and PCA 2011 was not found.
+#   Returns $null  if the signing chain could not be inspected.
+# ---------------------------------------------------------------------------
+function Test-SignedByPCA2011 {
+    <#
+    .SYNOPSIS
+    Tests whether an EFI binary's signing chain includes Microsoft Windows
+    Production PCA 2011.  Returns $true/$false/$null (unknown).
+    #>
+    param([string]$FilePath)
+
+    $certs = Get-EfiBinarySignerCAs -FilePath $FilePath
+    if ($certs.Count -eq 0) { return $null }
+
+    foreach ($cert in $certs) {
+        $fp = Get-CertSha256Fingerprint $cert
+        if ($fp -eq $MS_WIN_PCA_2011) { return $true }
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
+# Get-EfiBinarySigningCAName
+#   Returns a human-readable string describing the highest issuer CA found in
+#   the signing chain, using $KNOWN_CERT_NAMES if the fingerprint is
+#   recognized, otherwise the Issuer DN of the last (root) certificate.
+# ---------------------------------------------------------------------------
+function Get-EfiBinarySigningCAName {
+    <#
+    .SYNOPSIS
+    Returns a human-readable CA name for the root/issuer of an EFI binary's
+    signing chain.
+    #>
+    param([string]$FilePath)
+
+    $certs = Get-EfiBinarySignerCAs -FilePath $FilePath
+    if ($certs.Count -eq 0) { return "(unknown — chain not available)" }
+
+    # Walk from root (last element) looking for a known fingerprint
+    for ($i = $certs.Count - 1; $i -ge 0; $i--) {
+        $fp = Get-CertSha256Fingerprint $certs[$i]
+        if ($KNOWN_CERT_NAMES.ContainsKey($fp)) {
+            return $KNOWN_CERT_NAMES[$fp]
+        }
+    }
+    # Fall back to Issuer of the last cert in the chain
+    $root = $certs[$certs.Count - 1]
+    return $root.Issuer
+}
+
+# ---------------------------------------------------------------------------
+# Invoke-AuditBootloaderChain
+#   Mirrors audit_bootloader_chain_ca() in bootloader-scan.sh (bash).
+#   Scans EFI binaries in the Windows and Linux boot chains for PCA 2011
+#   signing. Adds findings to $script:Findings.
+# ---------------------------------------------------------------------------
+function Invoke-AuditBootloaderChain {
+    <#
+    .SYNOPSIS
+    Scans EFI bootloader binaries for Microsoft Windows Production PCA 2011
+    signing and adds findings to the global findings list.
+    #>
+
+    $espInfo = Get-EspMountPoint
+    if ($null -eq $espInfo) {
+        Add-Finding "WARNING" "bootloader" "Could not locate or mount EFI System Partition — bootloader CA scan skipped"
+        $script:BootloaderScanSkipped = $true
+        return
+    }
+
+    $esp       = $espInfo[0]
+    $weDidMount = $espInfo[1]
+
+    try {
+        $windowsPaths = @(Get-WindowsBootloaderPaths -EspDriveLetter $esp)
+        $linuxPaths   = @(Get-LinuxBootloaderPaths   -EspDriveLetter $esp)
+        $allPaths     = $windowsPaths + $linuxPaths
+
+        if ($allPaths.Count -eq 0) {
+            Add-Finding "WARNING" "bootloader" "No EFI bootloader binaries found on ESP — scan inconclusive"
+            $script:BootloaderScanSkipped = $true
+            return
+        }
+
+        $pca2011Found = $false
+        $scanFailed   = $false
+        $scanCount    = 0
+
+        foreach ($entry in $allPaths) {
+            $result = Test-SignedByPCA2011 -FilePath $entry.Path
+            if ($null -eq $result) {
+                Add-Finding "WARNING" "bootloader" "Could not inspect signing certificate for: $($entry.Description) ($($entry.Path))"
+                $scanFailed = $true
+                continue
+            }
+            $scanCount++
+            $caName = Get-EfiBinarySigningCAName -FilePath $entry.Path
+            if ($result -eq $true) {
+                Add-Finding "HIGH" "bootloader" (
+                    "Bootloader '$($entry.Description)' is signed by Microsoft Windows Production PCA 2011 — " +
+                    "DBX2024 CA revocation must NOT be applied until Windows is updated. " +
+                    "Install KB5062710 or later via Windows Update to migrate to Windows UEFI CA 2023."
+                )
+                $pca2011Found = $true
+            } else {
+                Add-Finding "INFO" "bootloader" "$($entry.Description): signed by $caName (not PCA 2011 — OK)"
+            }
+        }
+
+        if ($pca2011Found) {
+            Add-Finding "HIGH" "bootloader" (
+                "ACTION REQUIRED: One or more Windows boot binaries are still signed by the deprecated " +
+                "Microsoft Windows Production PCA 2011 certificate. " +
+                "Do NOT apply the DBX2024 optional Secure Boot update until after running Windows Update " +
+                "and confirming all boot binaries are re-signed with Windows UEFI CA 2023. " +
+                "See: https://support.microsoft.com/kb/5062710"
+            )
+            $script:BootloaderPCA2011InUse = $true
+        } elseif ($scanFailed -and $scanCount -eq 0) {
+            # Every binary failed inspection (none succeeded); treat as unsafe
+            # (fail-safe: if we could not verify any binary, do not permit DBX2024)
+            Add-Finding "WARNING" "bootloader" "Bootloader CA scan failed for all binaries — DBX2024 applicability unknown (treat as unsafe)"
+            $script:BootloaderPCA2011InUse = $true  # fail-safe
+        } else {
+            Add-Finding "INFO" "bootloader" (
+                "All scanned bootloaders ($scanCount) use post-2023 Microsoft CA signing. " +
+                "DBX2024 PCA 2011 CA revocation can be applied safely."
+            )
+            $script:BootloaderPCA2011InUse = $false
+        }
+    } finally {
+        if ($weDidMount) {
+            try {
+                & mountvol "$esp\" /D 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Verbose "Invoke-AuditBootloaderChain: mountvol /D exited with code $LASTEXITCODE for $esp"
+                }
+            } catch {
+                Write-Verbose "Invoke-AuditBootloaderChain: failed to unmount ${esp}: $_"
+            }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Invoke-AuditAll — mirrors audit_run_all() / audit_2026_ready() in audit.sh
 # ---------------------------------------------------------------------------
 function Invoke-AuditAll {
     $script:Findings.Clear()
-    $script:PkValid   = $false
-    $script:PkIsTest  = $false
-    $script:DbHas2023 = $false
-    $script:DbxCurrent = $false
+    $script:PkValid               = $false
+    $script:PkIsTest              = $false
+    $script:DbHas2023             = $false
+    $script:DbxCurrent            = $false
+    $script:BootloaderPCA2011InUse = $false
+    $script:BootloaderScanSkipped  = $false
 
     Invoke-AuditPk
     Invoke-AuditKek
     Invoke-AuditDb
     Invoke-AuditDbx
+    Invoke-AuditBootloaderChain
 
     # Composite 2026-readiness verdict (mirrors audit_2026_ready())
+    # Note: $script:BootloaderPCA2011InUse is checked separately below. A system
+    # can be '2026-ready' (PK/db/dbx in correct state) and yet still have DBX2024
+    # blocked because Windows boot binaries are still signed by PCA 2011. These
+    # are independent conditions: the 2026-readiness verdict covers variable state,
+    # while DBX2024 BLOCKED covers whether applying the optional CA revocation is
+    # safe for the current boot chain.
     $ready = $script:PkValid -and (-not $script:PkIsTest) -and $script:DbHas2023 -and $script:DbxCurrent
     if ($ready) {
-        Add-Finding "INFO" "2026" "System is 2026-ready"
+        Add-Finding "INFO" "2026-readiness" "System is 2026-ready"
     } else {
-        Add-Finding "INFO" "2026" "System is NOT 2026-ready"
-        if (-not $script:PkValid)    { Add-Finding "HIGH" "2026" "PK-invalid" }
-        if ($script:PkIsTest)        { Add-Finding "HIGH" "2026" "PK-is-test-key" }
-        if (-not $script:DbHas2023)  { Add-Finding "HIGH" "2026" "db-missing-2023-certs" }
-        if (-not $script:DbxCurrent) { Add-Finding "HIGH" "2026" "dbx-outdated" }
+        Add-Finding "INFO" "2026-readiness" "System is NOT 2026-ready"
+        if (-not $script:PkValid)    { Add-Finding "HIGH" "2026-readiness" "PK-invalid" }
+        if ($script:PkIsTest)        { Add-Finding "HIGH" "2026-readiness" "PK-is-test-key" }
+        if (-not $script:DbHas2023)  { Add-Finding "HIGH" "2026-readiness" "db-missing-2023-certs" }
+        if (-not $script:DbxCurrent) { Add-Finding "HIGH" "2026-readiness" "dbx-outdated" }
+    }
+
+    # Bootloader PCA 2011 verdict — separate from core readiness, blocks DBX2024 update
+    if ($script:BootloaderPCA2011InUse) {
+        $script:Findings.Add(@{
+            Severity  = "HIGH"
+            Component = "2026-readiness"
+            Message   = "DBX2024 BLOCKED: Windows boot binaries still signed by PCA 2011. " +
+                        "Apply Windows Update (KB5062710) before applying DBX2024."
+        })
     }
 
     return $ready
@@ -846,6 +1170,52 @@ function Write-Findings {
 }
 
 # ---------------------------------------------------------------------------
+# Write-BootloaderFindings
+#   Display bootloader certificate chain analysis findings under a dedicated
+#   heading, separate from the general findings list.
+# ---------------------------------------------------------------------------
+function Write-BootloaderFindings {
+    <#
+    .SYNOPSIS
+    Prints bootloader CA findings grouped under a dedicated section heading.
+    #>
+    Write-SectionHr
+    Write-Host "  Bootloader Certificate Chain Analysis" -ForegroundColor White
+    Write-SectionHr
+    Write-Host ""
+
+    if ($script:BootloaderScanSkipped) {
+        Write-Host "  (Bootloader scan was skipped — run as Administrator with the EFI System Partition accessible)" -ForegroundColor Yellow
+        Write-Host ""
+    }
+
+    $bootFindings = @($script:Findings | Where-Object { $_.Component -eq "bootloader" })
+    if ($bootFindings.Count -eq 0) {
+        Write-Host "  No bootloader findings." -ForegroundColor Green
+        Write-Host ""
+        return
+    }
+
+    foreach ($sev in @("CRITICAL", "HIGH", "WARNING", "INFO")) {
+        $sevFindings = @($bootFindings | Where-Object { $_.Severity -eq $sev })
+        if ($sevFindings.Count -eq 0) { continue }
+
+        $color = switch ($sev) {
+            "CRITICAL" { "Red" }
+            "HIGH"     { "Red" }
+            "WARNING"  { "Yellow" }
+            default    { "Gray" }
+        }
+
+        foreach ($f in $sevFindings) {
+            Write-Host "  [$sev] " -ForegroundColor $color -NoNewline
+            Write-Host $f.Message -ForegroundColor $color
+        }
+        Write-Host ""
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Write-ReadinessBanner
 #   Display the 2026-readiness PASS / FAIL banner.
 #   Mirrors report_2026_readiness() in report.sh.
@@ -930,11 +1300,13 @@ $defaultsAudit = Invoke-AuditDefaultVars
 #   1. Live variable summary  }
 #   2. Default variable summary }  both summaries together
 #   3. Audit findings          }
-#   4. 2026 readiness banner   }  verdicts together
-#   5. Restore defaults verdict}
+#   4. Bootloader CA findings  }
+#   5. 2026 readiness banner   }  verdicts together
+#   6. Restore defaults verdict}
 Write-VariableSummary
 Write-DefaultsVariableSummary -Audit $defaultsAudit
 Write-Findings
+Write-BootloaderFindings
 Write-ReadinessBanner -Ready $ready
 Write-DefaultsVerdict -Audit $defaultsAudit
 
