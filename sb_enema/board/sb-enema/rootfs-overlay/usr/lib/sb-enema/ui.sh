@@ -124,6 +124,38 @@ ui_textbox() {
 }
 
 # ---------------------------------------------------------------------------
+# ui_capture_and_show <title> [height] [width] <cmd> [args...]
+#   Run a command, capture its combined stdout+stderr, strip ANSI colour
+#   codes, and display the result in a scrollable textbox.
+#   Falls back to running the command directly (output to stdout) when
+#   dialog is not available.
+#   Returns the exit code of the command.
+# ---------------------------------------------------------------------------
+ui_capture_and_show() {
+    local title="$1"
+    local height="${2:-24}"
+    local width="${3:-80}"
+    shift 3
+
+    if [[ "${HAS_DIALOG}" -eq 1 ]]; then
+        local tmpfile plain rc=0
+        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        chmod 600 "${tmpfile}"
+        "$@" >"${tmpfile}" 2>&1 || rc=$?
+        plain=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        chmod 600 "${plain}"
+        sed 's/\x1b\[[0-9;]*m//g' < "${tmpfile}" > "${plain}"
+        rm -f "${tmpfile}"
+        dialog --title "${title}" --textbox "${plain}" "${height}" "${width}" \
+               >/dev/tty </dev/tty || true
+        rm -f "${plain}"
+        return "${rc}"
+    else
+        "$@"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # ui_inputbox <title> <text> <init_value> [height] [width]
 #   Prompt the user for text input.
 #   Prints the entered text to stdout.

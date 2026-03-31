@@ -363,20 +363,20 @@ run_menu_loop() {
             15 "Exit") || continue
 
         case "${choice}" in
-            1)  handle_option_1 ;;
+            1)  ui_capture_and_show "Secure Boot Report"        40 80 handle_option_1 ;;
             2)  handle_full_colonic ;;
             3)  handle_microsoft_colonic ;;
             4)  handle_microsoft_suppository ;;
-            5)  handle_stage_microsoft_pk ;;
-            6)  handle_stage_microsoft_kek_db_dbx ;;
-            7)  handle_stage_user_pk_kek ;;
-            8)  handle_stage_user_kek_db ;;
-            9)  handle_stage_bios_entries ;;
-            10) handle_show_delta ;;
-            11) handle_clear_staging ;;
+            5)  ui_capture_and_show "Stage Microsoft PK"         24 80 handle_stage_microsoft_pk ;;
+            6)  ui_capture_and_show "Stage Microsoft KEK/DB/DBX" 24 80 handle_stage_microsoft_kek_db_dbx ;;
+            7)  ui_capture_and_show "Stage User PK & KEK"        30 80 handle_stage_user_pk_kek ;;
+            8)  ui_capture_and_show "Stage User KEK & DB"        30 80 handle_stage_user_kek_db ;;
+            9)  ui_capture_and_show "Stage Vendor Entries"       24 80 handle_stage_bios_entries ;;
+            10) ui_capture_and_show "Staged Delta"               40 80 handle_show_delta ;;
+            11) ui_capture_and_show "Clear Staging Area"         10 60 handle_clear_staging ;;
             12) handle_apply ;;
             13) handle_set_cert_cn ;;
-            14) handle_option_14 ;;
+            14) ui_capture_and_show "Restore OEM Defaults"       40 80 handle_option_14 ;;
             15) handle_option_15 ;;
             *)
                 echo -e "${RED}Invalid choice. Please enter a number between 1 and 15.${RESET}"
@@ -475,13 +475,6 @@ main() {
     log_init
 
     print_banner
-
-    # Run audit automatically on startup
-    log_info "Running Secure Boot audit..."
-
-
-    # Display full report automatically
-    report_full
 
     # Check if CLI mode was requested
     if [[ $# -gt 0 ]]; then

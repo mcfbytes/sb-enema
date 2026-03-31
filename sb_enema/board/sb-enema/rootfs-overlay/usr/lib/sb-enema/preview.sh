@@ -85,10 +85,10 @@ _preview_display_var() {
 }
 
 # ---------------------------------------------------------------------------
-# preview_display()
-#   Render the full preview showing planned changes for all variables.
+# _preview_display_impl()
+#   Internal: write the full change preview with ANSI colours to stdout.
 # ---------------------------------------------------------------------------
-preview_display() {
+_preview_display_impl() {
     echo
     echo -e "${BOLD}══════════════════════════════════════════════════════════════${RESET}"
     echo -e "${BOLD}  What Will Change?${RESET}"
@@ -111,6 +111,26 @@ preview_display() {
     echo -e "${YELLOW}  • OEM-specific Secure Boot features may stop working${RESET}"
     echo -e "${YELLOW}  • These changes are reversible via BIOS 'Restore Factory Keys'${RESET}"
     echo
+}
+
+# ---------------------------------------------------------------------------
+# preview_display()
+#   Render the full preview showing planned changes for all variables.
+#   With dialog: shown in a scrollable textbox (via /dev/tty).
+#   Without dialog: plain stdout.
+# ---------------------------------------------------------------------------
+preview_display() {
+    if [[ "${HAS_DIALOG:-0}" -eq 1 ]]; then
+        local tmpfile
+        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        chmod 600 "${tmpfile}"
+        _preview_display_impl | sed 's/\x1b\[[0-9;]*m//g' > "${tmpfile}"
+        dialog --title "What Will Change?" --textbox "${tmpfile}" 24 80 \
+               >/dev/tty </dev/tty || true
+        rm -f "${tmpfile}"
+    else
+        _preview_display_impl
+    fi
 }
 
 # ---------------------------------------------------------------------------
