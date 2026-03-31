@@ -116,27 +116,17 @@ preview_display() {
 # ---------------------------------------------------------------------------
 # preview_confirm()
 #   Prompt the user to confirm applying changes.
-#   Require explicit "y" or "yes"; anything else is treated as decline.
-#   Logs the user's response.
 #   Returns 0 for confirmed, 1 for declined.
 # ---------------------------------------------------------------------------
 preview_confirm() {
-    local response
-    echo -n "Apply these changes? [y/N] "
-    read -r response
-
-    log_info "User response to confirmation prompt: '${response}'"
-
-    case "${response}" in
-        y|Y|yes|YES|Yes)
-            log_info "User confirmed changes"
-            return 0
-            ;;
-        *)
-            log_info "User declined changes"
-            return 1
-            ;;
-    esac
+    log_info "Prompting user to confirm changes"
+    if ui_yesno "Apply these changes?"; then
+        log_info "User confirmed changes"
+        return 0
+    else
+        log_info "User declined changes"
+        return 1
+    fi
 }
 
 # ---------------------------------------------------------------------------

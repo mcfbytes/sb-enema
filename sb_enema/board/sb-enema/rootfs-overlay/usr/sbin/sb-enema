@@ -21,6 +21,7 @@ source "${LIB_DIR}/preview.sh"
 source "${LIB_DIR}/keygen.sh"
 source "${LIB_DIR}/stage.sh"
 source "${LIB_DIR}/enroll.sh"
+source "${LIB_DIR}/ui.sh"
 
 # ---------------------------------------------------------------------------
 # Version string — updated at release time.
@@ -61,38 +62,6 @@ cleanup() {
     fi
 
     exit "${exit_code}"
-}
-
-# ---------------------------------------------------------------------------
-# show_menu() — display the main menu options
-# ---------------------------------------------------------------------------
-show_menu() {
-    echo
-    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}   Quick Actions${RESET}"
-    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo "  [1]  View Secure Boot report"
-    echo "  [2]  Full Colonic — User PK/KEK + Microsoft db/dbx → enroll"
-    echo "  [3]  Microsoft Colonic — Microsoft PK/KEK/db/dbx → enroll"
-    echo "  [4]  Microsoft Suppository — Add missing Microsoft KEK/db/dbx (keep PK) → enroll"
-    echo
-    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}   Staging (advanced)${RESET}"
-    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo "  [5]  Stage Microsoft PK"
-    echo "  [6]  Stage Microsoft KEK, DB, DBX"
-    echo "  [7]  Stage User-generated PK & KEK"
-    echo "  [8]  Stage User-generated KEK, DB"
-    echo "  [9]  Stage vendor default entries (KEKDefault/dbDefault certs, vendor filter applied)"
-    echo "  [10] Show staged delta (what will change)"
-    echo "  [11] Clear staging area"
-    echo "  [12] Apply staged changes (enroll)"
-    echo
-    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo "  [13] Set certificate CN (name prefix)"
-    echo "  [14] Restore OEM Defaults — BIOS instructions"
-    echo "  [15] Exit"
-    echo
 }
 
 # ---------------------------------------------------------------------------
@@ -281,15 +250,12 @@ handle_apply() {
 # ---------------------------------------------------------------------------
 handle_set_cert_cn() {
     log_info "Menu selection: Set certificate CN prefix"
-    echo
-    echo -e "${BOLD}Set Certificate CN (Name Prefix)${RESET}"
-    echo
-    echo "Enter the name prefix for the Common Name (CN) of user-generated"
-    echo "certificates (PK, KEK, and DB). Press Enter to keep the current value."
-    echo
     local cn_input
-    read -rp "  Certificate name prefix [${CERT_CN_PREFIX}]: " cn_input
-    if [[ -n "${cn_input}" ]]; then
+    cn_input=$(ui_inputbox \
+        "Set Certificate CN (Name Prefix)" \
+        "Enter the name prefix for the Common Name (CN) of user-generated certificates (PK, KEK, and DB). Leave unchanged to keep the current value." \
+        "${CERT_CN_PREFIX}")
+    if [[ -n "${cn_input}" ]] && [[ "${cn_input}" != "${CERT_CN_PREFIX}" ]]; then
         local sanitized
         sanitized=$(_keygen_sanitize_dn_field "${cn_input}")
         if [[ "${sanitized}" == "Unknown" ]]; then
@@ -375,10 +341,26 @@ handle_option_15() {
 # ---------------------------------------------------------------------------
 run_menu_loop() {
     while true; do
-        show_menu
-
         local choice
-        read -rp "Enter your choice [1-15]: " choice
+        choice=$(ui_menu \
+            "SB-ENEMA" \
+            "Select an operation:" \
+            24 76 15 \
+            1  "View Secure Boot report" \
+            2  "Full Colonic — User PK/KEK + Microsoft db/dbx → enroll" \
+            3  "Microsoft Colonic — Microsoft PK/KEK/db/dbx → enroll" \
+            4  "Microsoft Suppository — Add missing Microsoft KEK/db/dbx (keep PK)" \
+            5  "Stage Microsoft PK" \
+            6  "Stage Microsoft KEK, DB, DBX" \
+            7  "Stage User-generated PK & KEK" \
+            8  "Stage User-generated KEK, DB" \
+            9  "Stage vendor default entries (KEKDefault/dbDefault certs)" \
+            10 "Show staged delta (what will change)" \
+            11 "Clear staging area" \
+            12 "Apply staged changes (enroll)" \
+            13 "Set certificate CN (name prefix)" \
+            14 "Restore OEM Defaults — BIOS instructions" \
+            15 "Exit") || continue
 
         case "${choice}" in
             1)  handle_option_1 ;;
