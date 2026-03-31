@@ -122,7 +122,7 @@ _preview_display_impl() {
 preview_display() {
     if [[ "${HAS_DIALOG:-0}" -eq 1 ]]; then
         local tmpfile
-        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX)
         chmod 600 "${tmpfile}"
         _preview_display_impl | sed 's/\x1b\[[0-9;]*m//g' > "${tmpfile}"
         dialog --title "What Will Change?" --textbox "${tmpfile}" 24 80 \

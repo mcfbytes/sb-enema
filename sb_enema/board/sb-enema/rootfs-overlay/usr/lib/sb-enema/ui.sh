@@ -139,10 +139,10 @@ ui_capture_and_show() {
 
     if [[ "${HAS_DIALOG}" -eq 1 ]]; then
         local tmpfile plain rc=0
-        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX)
         chmod 600 "${tmpfile}"
         "$@" >"${tmpfile}" 2>&1 || rc=$?
-        plain=$(mktemp /tmp/sb-enema-XXXXXX.txt)
+        plain=$(mktemp /tmp/sb-enema-XXXXXX)
         chmod 600 "${plain}"
         sed 's/\x1b\[[0-9;]*m//g' < "${tmpfile}" > "${plain}"
         rm -f "${tmpfile}"
