@@ -99,6 +99,7 @@ handle_full_colonic() {
     enroll || { log_error "Enrollment failed"; return 1; }
 
     log_success "Full Colonic completed successfully"
+    ui_msgbox "Full Colonic Complete" "Enrollment completed successfully." 7 50
 }
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ handle_microsoft_colonic() {
     enroll || { log_error "Microsoft Colonic enrollment failed"; return 1; }
 
     log_success "Microsoft Colonic completed successfully"
+    ui_msgbox "Microsoft Colonic Complete" "Enrollment completed successfully." 7 50
 }
 
 # ---------------------------------------------------------------------------
@@ -150,6 +152,7 @@ handle_microsoft_suppository() {
     enroll || { log_error "Microsoft Suppository enrollment failed"; return 1; }
 
     log_success "Microsoft Suppository completed successfully"
+    ui_msgbox "Microsoft Suppository Complete" "Enrollment completed successfully." 7 50
 }
 
 # ---------------------------------------------------------------------------
@@ -242,6 +245,7 @@ handle_apply() {
     log_info "Menu selection: Apply staged changes"
     echo
     enroll || { log_error "Enrollment failed"; return 1; }
+    ui_msgbox "Apply Changes Complete" "Enrollment completed successfully." 7 50
 }
 
 # ---------------------------------------------------------------------------
@@ -347,9 +351,9 @@ run_menu_loop() {
             "Select an operation:" \
             24 76 15 \
             1  "View Secure Boot report" \
-            2  "Full Colonic — User PK/KEK + Microsoft db/dbx → enroll" \
-            3  "Microsoft Colonic — Microsoft PK/KEK/db/dbx → enroll" \
-            4  "Microsoft Suppository — Add missing Microsoft KEK/db/dbx (keep PK)" \
+            2  "Full Colonic - User PK/KEK + Microsoft db/dbx -> enroll" \
+            3  "Microsoft Colonic - Microsoft PK/KEK/db/dbx -> enroll" \
+            4  "Microsoft Suppository - Add missing Microsoft KEK/db/dbx (keep PK)" \
             5  "Stage Microsoft PK" \
             6  "Stage Microsoft KEK, DB, DBX" \
             7  "Stage User-generated PK & KEK" \
@@ -359,7 +363,7 @@ run_menu_loop() {
             11 "Clear staging area" \
             12 "Apply staged changes (enroll)" \
             13 "Set certificate CN (name prefix)" \
-            14 "Restore OEM Defaults — BIOS instructions" \
+            14 "Restore OEM Defaults - BIOS instructions" \
             15 "Exit") || continue
 
         case "${choice}" in

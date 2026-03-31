@@ -125,34 +125,33 @@ ui_textbox() {
 
 # ---------------------------------------------------------------------------
 # ui_capture_and_show <title> [height] [width] <cmd> [args...]
-#   Run a command, capture its combined stdout+stderr, strip ANSI colour
-#   codes, and display the result in a scrollable textbox.
+#   Run a command, writing its combined stdout+stderr directly to /dev/tty
+#   so that ANSI color codes are preserved.  Waits for the user to press
+#   Enter before returning to the menu.
 #   Falls back to running the command directly (output to stdout) when
 #   dialog is not available.
 #   Returns the exit code of the command.
 # ---------------------------------------------------------------------------
 ui_capture_and_show() {
     local title="$1"
+    # height and width kept for call-site compatibility but not used in the
+    # direct-tty path (dialog --textbox does not render ANSI colors).
     local height="${2:-24}"
     local width="${3:-80}"
     shift 3
 
+    local rc=0
     if [[ "${HAS_DIALOG}" -eq 1 ]]; then
-        local tmpfile plain rc=0
-        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX)
-        chmod 600 "${tmpfile}"
-        "$@" >"${tmpfile}" 2>&1 || rc=$?
-        plain=$(mktemp /tmp/sb-enema-XXXXXX)
-        chmod 600 "${plain}"
-        sed 's/\x1b\[[0-9;]*m//g' < "${tmpfile}" > "${plain}"
-        rm -f "${tmpfile}"
-        dialog --title "${title}" --textbox "${plain}" "${height}" "${width}" \
-               >/dev/tty </dev/tty || true
-        rm -f "${plain}"
-        return "${rc}"
+        printf '%s' "${ANSI_CLEAR}" >/dev/tty
+        echo -e "${BOLD}  ${title}${RESET}" >/dev/tty
+        echo >/dev/tty
+        "$@" >/dev/tty 2>&1 || rc=$?
+        printf '\n  Press Enter to return to the menu...' >/dev/tty
+        read -r _ </dev/tty
     else
-        "$@"
+        "$@" || rc=$?
     fi
+    return "${rc}"
 }
 
 # ---------------------------------------------------------------------------

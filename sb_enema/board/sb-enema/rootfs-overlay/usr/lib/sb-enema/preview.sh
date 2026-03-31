@@ -116,18 +116,15 @@ _preview_display_impl() {
 # ---------------------------------------------------------------------------
 # preview_display()
 #   Render the full preview showing planned changes for all variables.
-#   With dialog: shown in a scrollable textbox (via /dev/tty).
+#   With dialog: clear the screen and write directly to /dev/tty so that
+#   ANSI colors are preserved.  preview_confirm() follows immediately,
+#   so no extra "Press Enter" prompt is needed here.
 #   Without dialog: plain stdout.
 # ---------------------------------------------------------------------------
 preview_display() {
     if [[ "${HAS_DIALOG:-0}" -eq 1 ]]; then
-        local tmpfile
-        tmpfile=$(mktemp /tmp/sb-enema-XXXXXX)
-        chmod 600 "${tmpfile}"
-        _preview_display_impl | sed 's/\x1b\[[0-9;]*m//g' > "${tmpfile}"
-        dialog --title "What Will Change?" --textbox "${tmpfile}" 24 80 \
-               >/dev/tty </dev/tty || true
-        rm -f "${tmpfile}"
+        printf '%s' "${ANSI_CLEAR}" >/dev/tty
+        _preview_display_impl >/dev/tty
     else
         _preview_display_impl
     fi

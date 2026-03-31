@@ -50,6 +50,11 @@ DIM="\033[2m"
 BOLD="\033[1m"
 RESET="\033[0m"
 
+# ANSI clear-screen + cursor-home sequence (VT100/ANSI compatible).
+# Used by ui_capture_and_show and preview_display to clear the dialog
+# chrome before writing color output directly to /dev/tty.
+ANSI_CLEAR=$'\033[2J\033[H'
+
 # ---------------------------------------------------------------------------
 # die() — print an error message and exit nonzero.
 #   Usage: die "Something went wrong"

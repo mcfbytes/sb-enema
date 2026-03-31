@@ -34,7 +34,7 @@ _report_print() {
     local text="${1:-}"
     echo -e "${text}"
     local plain
-    plain=$(printf '%s' "${text}" | sed 's/\x1b\[[0-9;]*m//g')
+    plain=$(printf '%s' "${text}" | sed "s/$(printf '\033')\[[0-9;]*m//g")
     _log_raw "${plain}"
 }
 
@@ -397,7 +397,7 @@ report_save() {
     }
     local outfile
     outfile="${REPORT_DIR}/report-$(date -u +%Y%m%d-%H%M%S).txt"
-    report_full | sed 's/\x1b\[[0-9;]*m//g' > "${outfile}"
+    report_full | sed "s/$(printf '\033')\[[0-9;]*m//g" > "${outfile}"
     log_info "Report saved to ${outfile}"
     echo "${outfile}"
 }
