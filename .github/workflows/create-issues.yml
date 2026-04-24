@@ -1,0 +1,439 @@
+name: Create Code-Review Issues (1–17)
+
+# Runs once on push to this branch, then the branch is merged / deleted.
+# The job is skipped automatically on subsequent runs via a sentinel label.
+on:
+  push:
+    branches:
+      - "copilot/create-github-issues-1-17"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Create labels (idempotent)
+        run: |
+          create_label() {
+            local name="$1" color="$2" desc="$3"
+            gh label create "$name" --color "$color" --description "$desc" --repo "$REPO" 2>/dev/null \
+              || gh label edit "$name" --color "$color" --description "$desc" --repo "$REPO" 2>/dev/null \
+              || true
+          }
+          create_label "bug"              "d73a4a" "Something isn't working"
+          create_label "correctness"      "e4e669" "Logical or behavioral defect"
+          create_label "secure-boot"      "0075ca" "Secure Boot pipeline"
+          create_label "enhancement"      "a2eeef" "New feature or request"
+          create_label "robustness"       "f9d0c4" "Resilience / error-handling gap"
+          create_label "refactor"         "cfd3d7" "Code structure improvement"
+          create_label "maintainability"  "bfd4f2" "Readability / DRY / separation of concerns"
+
+      # ── Issues 1–6: correctness ────────────────────────────────────────────
+
+      - name: Issue 1
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] safety_check_payload_integrity silently passes when SHA256SUMS manifest is absent" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+\`safety_check_payload_integrity()\` returns success (exit 0) whenever \`SHA256SUMS\` does not exist, logging only a warning. An attacker who deletes or prevents creation of the manifest file can therefore bypass all payload integrity checks, allowing tampered \`.auth\` payloads to be enrolled.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/safety.sh\`
+Function: \`safety_check_payload_integrity()\`, lines 141-146.
+
+## Impact
+
+If \`\${DATA_MOUNT}/sb-enema/payloads/SHA256SUMS\` is absent (deleted, never created, or on a corrupted filesystem), enrollment proceeds with zero integrity verification. A tampered \`db.auth\`, \`KEK.auth\`, or \`PK.auth\` payload can be enrolled silently.
+
+## Proposed Fix
+
+Treat a missing manifest as a hard-block failure rather than a warning. Add a flag (e.g., \`--skip-integrity-check\`) that must be passed explicitly by callers who intentionally operate without a manifest (such as the first-time build)."
+
+      - name: Issue 2
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] Post-write verification skipped when staged certificate files cannot be parsed" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+\`_enroll_staged_fingerprints()\` silently returns failure (exit 1 with empty output) when every staged certificate file fails the \`openssl x509\` parse step (e.g., corrupt DER, wrong extension). The callers in \`enroll()\` catch this with \`|| pk_fps=\"\"\` and then skip post-write verification entirely, logging only a \`log_warn\`. Enrollment continues without any cryptographic confirmation that the correct key was written.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll.sh\`
+Function: \`_enroll_staged_fingerprints()\`, lines 36-64; \`enroll()\`, lines 210-214.
+
+## Impact
+
+If staged cert files are corrupt or in an unexpected encoding, the post-write verification step for PK and/or KEK is silently skipped. A firmware that accepted any ESL payload in Setup Mode would not be detected as having written the wrong certificate.
+
+## Proposed Fix
+
+Distinguish between \"no cert files found\" (empty directory → skip with warn) and \"cert files present but all failed to parse\" (parse error → hard failure). Return a distinct exit code or set a separate error flag so callers can block enrollment instead of silently proceeding."
+
+      - name: Issue 3
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] _dbx_esl_from_auth_or_raw reads file offsets without minimum-size guard" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+\`_dbx_esl_from_auth_or_raw()\` reads 2 bytes at offset 22 (type detection) and, on a positive match, 4 bytes at offset 16 (WIN_CERTIFICATE.dwLength), with no check that the source file is at least 24 bytes long. In contrast, \`_enroll_is_auth_file()\` (and its duplicate \`_pk_is_auth_file()\`) explicitly guard against files shorter than 24 bytes. A file shorter than 24 bytes fed to \`_dbx_esl_from_auth_or_raw\` can produce a zero-length or wrong \`type_bytes\`, falling through to the raw-ESL branch without a clear error.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh\`
+Function: \`_dbx_esl_from_auth_or_raw()\`, lines 506-529.
+Compare: \`_enroll_is_auth_file()\` in \`enroll.sh\`, lines 97-110.
+
+## Impact
+
+A malformed or truncated DBX binary is silently treated as a raw ESL, producing either an empty output (caught by the \`[[ -s \"\${out}\" ]]\` guard at line 528) or a partial copy that passes the size check but contains no valid entries.
+
+## Proposed Fix
+
+Add the same file-size check present in \`_enroll_is_auth_file\`: return an error (or fall through to raw path) if \`wc -c\` reports fewer than 24 bytes."
+
+      - name: Issue 4
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] efivar_extract_certs silently drops trailing bytes when data_len is not divisible by sig_size" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+In \`efivar_extract_certs()\`, the number of EFI_SIGNATURE_DATA entries per list is computed as \`num_entries=\$(( data_len / sig_size ))\` (integer division). If the raw ESL is malformed and \`data_len % sig_size != 0\`, the trailing bytes are silently discarded with no warning or error. A certificate sitting in those trailing bytes is never extracted.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/efivar.sh\`
+Function: \`efivar_extract_certs()\`, lines 271-293.
+
+## Impact
+
+On a malformed or partially-written EFI variable, some enrolled certificates may not be extracted, causing \`safety_verify_write\` to report failure even when the correct certificate was actually written—or, in the opposite direction, silently missing an unexpected certificate.
+
+## Proposed Fix
+
+After the loop, check whether \`\$(( data_len % sig_size ))\` is non-zero and emit a \`log_warn\` identifying the ESL entry that has trailing padding."
+
+      - name: Issue 5
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] _stage_build_dbx_payload stages raw ESL to PAYLOAD_DIR before signing completes" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+\`_stage_build_dbx_payload()\` copies the raw ESL to \`PAYLOAD_DIR/dbx/dbx.esl\` (for the preview engine) **before** calling \`sign-efi-sig-list\`. If signing fails (missing key, tool error, disk full), the unsigned ESL remains in the staging area. On the next invocation, \`stage_microsoft_kek_db_dbx()\` sees a non-empty \`PAYLOAD_DIR/dbx/dbx.esl\` and skips re-staging, while \`PAYLOAD_DIR/dbx.auth\` is absent or zero-length. This leaves the pipeline in an inconsistent state.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh\`
+Function: \`_stage_build_dbx_payload()\`, lines 584-611.
+
+## Impact
+
+A failed dbx signing step leaves a stale unsigned ESL in the preview directory, causing the delta display to show a dbx update that cannot be enrolled, with no clear indication of why \`dbx.auth\` is absent.
+
+## Proposed Fix
+
+Stage the raw ESL to a temporary path inside \`workdir\` first; copy it to \`PAYLOAD_DIR/dbx/dbx.esl\` only after \`sign-efi-sig-list\` succeeds."
+
+      - name: Issue 6
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[correctness] _enroll_var logs ENROLL/SUCCESS before post-write verification runs" \
+            --label "bug,correctness,secure-boot" \
+            --body "## Summary
+
+In \`_enroll_var()\`, \`log_action \"ENROLL\" \"\${varname}\" \"SUCCESS\"\` is called immediately after \`efi-updatevar\` returns 0, before \`safety_verify_write\` is invoked. If the verification step subsequently fails (fingerprint mismatch), the audit log already contains a SUCCESS record for a write that did not pass cryptographic verification.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll.sh\`
+Function: \`_enroll_var()\`, lines 158-171.
+
+## Impact
+
+Audit logs and post-enrollment reports may show all variables as successfully enrolled even when post-write fingerprint verification failed, making the log unreliable as a security artifact.
+
+## Proposed Fix
+
+Emit the SUCCESS log entry only after \`safety_verify_write\` returns 0. Emit a distinct \`log_action \"ENROLL\" \"VERIFIED\" \"SUCCESS\"\` to make the two-step nature explicit in the audit trail."
+
+      # ── Issues 7–13: robustness ────────────────────────────────────────────
+
+      - name: Issue 7
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] cert-to-efi-sig-list failures in _stage_build_kek_esl are not checked" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+Every invocation of \`cert-to-efi-sig-list\` in \`_stage_build_kek_esl()\` (and in \`_stage_build_db_esl()\`) lacks explicit error handling. If the tool fails—due to a missing dependency, a malformed certificate, or a full disk—the function continues silently, appending nothing to the combined ESL. The resulting \`KEK.esl\` or \`db.esl\` may be empty or missing expected entries without any diagnostic message.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh\`
+Functions: \`_stage_build_kek_esl()\` lines 357-430, \`_stage_build_db_esl()\` lines 437-488.
+
+## Impact
+
+A silently empty ESL leads to \`sign-efi-sig-list\` producing a signed payload that enrolls zero certificates. In the KEK case, this removes all KEK trust, breaking future dbx updates.
+
+## Proposed Fix
+
+Wrap each \`cert-to-efi-sig-list\` call with \`|| die\`, or capture its exit code and call \`die\` with a meaningful message identifying which certificate caused the failure."
+
+      - name: Issue 8
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] efi-updatevar calls have no timeout, risking indefinite hang on unresponsive firmware" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`efi-updatevar\` in \`_enroll_var()\` is invoked without a timeout. UEFI firmware that is busy, in a bad state, or exhibiting a known hang bug can cause the enrollment script to block indefinitely at the write step, with no way to abort short of a hard reboot. During this stall, the system may lose AC power or the user may force-reboot, leaving Secure Boot variables in a partially written state.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll.sh\`
+Function: \`_enroll_var()\`, line 156.
+
+## Impact
+
+An unresponsive firmware write can hang the enrollment process indefinitely. If the user power-cycles the system mid-write (after KEK but before PK, for example), Secure Boot variables are left in a partially enrolled state.
+
+## Proposed Fix
+
+Wrap the call: \`timeout 30 efi-updatevar \"\${efi_args[@]}\" \"\${auth_file}\" \"\${varname}\"\` and treat a timeout exit code (124) as a distinct failure case with a specific error message guiding the user to reboot and retry."
+
+      - name: Issue 9
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] Temporary directory from safety_check_setup_mode can leak on unexpected exit paths" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`safety_check_setup_mode()\` creates a \`tmpdir\` via \`mktemp -d\` and relies on two explicit \`rm -rf\` calls (one in the PK-matches-user early-return path, one after the if block) for cleanup. There is no \`trap\` guard. If a future code modification adds a new early-return path, or if \`efivar_extract_certs\` or \`openssl\` throws an unexpected error that is caught by the outer \`set -e\`, the temporary directory is leaked.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/safety.sh\`
+Function: \`safety_check_setup_mode()\`, lines 53-89.
+
+## Impact
+
+Minor resource leak (a temporary directory under \`/tmp\`), but the pattern is fragile and inconsistent with the trap-based cleanup used elsewhere in the codebase (e.g., \`stage_user_pk_kek\` at line 647, \`efivar_extract_certs\` at line 204).
+
+## Proposed Fix
+
+Run the PK-check block inside a subshell with \`trap 'rm -rf \"\${tmpdir}\"' EXIT\`, consistent with the pattern used in \`efivar_extract_certs()\`."
+
+      - name: Issue 10
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] OWNER_GUID is not validated for GUID format before use in cert-to-efi-sig-list" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`OWNER_GUID\` is populated by \`keygen_load_or_generate_guid()\` and used as the \`-g\` argument to every \`cert-to-efi-sig-list\` and \`sign-efi-sig-list\` invocation. There is no validation that the returned value matches the expected 8-4-4-4-12 UUID format. If the GUID file on the data partition is corrupted, truncated, or tampered with, \`cert-to-efi-sig-list\` receives an invalid GUID and either silently produces a malformed ESL or fails with a non-descriptive error.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh\`
+Functions: \`stage_user_pk_kek()\` line 634, \`stage_user_kek_db()\` line 703, \`stage_sign_db()\` line 787, \`stage_sign_kek()\` line 828.
+
+## Impact
+
+A malformed GUID produces an ESL with an invalid SignatureOwner field. The resulting \`.auth\` payload may be rejected by some UEFI implementations at write time with an opaque error, or silently accepted but unverifiable by \`safety_verify_write\`.
+
+## Proposed Fix
+
+After \`keygen_load_or_generate_guid\` returns, validate the value against a regex \`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\$\` and call \`die\` with a clear message if it does not match."
+
+      - name: Issue 11
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] stage_clear does not validate PAYLOAD_DIR before running rm -rf" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`stage_clear()\` iterates over \`\${PAYLOAD_DIR}/*\` and calls \`rm -rf\` on each item. While \`set -u\` prevents an unset \`PAYLOAD_DIR\` from causing harm, an explicitly empty string (\`PAYLOAD_DIR=\"\"\`) or a path that resolves to \`/\` or another critical directory would still reach the \`rm -rf\` call. No prefix/sanity check is applied to \`PAYLOAD_DIR\` before deletion.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh\`
+Function: \`stage_clear()\`, lines 56-79.
+
+## Impact
+
+Extremely low probability under normal use, but a misconfigured or attacked environment where \`DATA_MOUNT\` is set to \`/\` could result in recursive deletion of system files.
+
+## Proposed Fix
+
+Add a guard at the top of \`stage_clear()\` (and any other function that deletes from \`PAYLOAD_DIR\`): verify that \`PAYLOAD_DIR\` is non-empty, is an absolute path, and contains the expected path component (e.g., starts with \`/mnt/\` or \`/tmp/\`)."
+
+      - name: Issue 12
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] enroll() does not re-verify Setup Mode between individual variable writes" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`enroll()\` calls \`safety_preflight\` once before the write loop, which checks Setup Mode. However, after writing \`db\` and \`dbx\`, the system is still in Setup Mode only because PK is not yet written. Certain UEFI firmware implementations (or power-loss events during write) may exit Setup Mode unexpectedly between writes. When \`efi-updatevar\` subsequently fails on \`KEK\` or \`PK\` with a cryptic \`EINVAL\`, there is no intermediate check to explain the real cause.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll.sh\`
+Function: \`enroll()\`, lines 188-253.
+
+## Impact
+
+If Setup Mode exits between the \`db\` and \`PK\` writes (firmware bug, unexpected power event), the user sees a raw \`efi-updatevar\` failure with no actionable guidance, leaving Secure Boot partially enrolled.
+
+## Proposed Fix
+
+Re-check \`efivar_get_setup_mode\` before writing each variable (or at minimum before writing KEK and PK). On failure, emit the same guided message as \`safety_check_setup_mode\`."
+
+      - name: Issue 13
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[robustness] efivar_cert_cache_clear does not sanity-check cache directory path before rm -rf" \
+            --label "enhancement,robustness" \
+            --body "## Summary
+
+\`efivar_cert_cache_clear()\` calls \`rm -rf \"\${_EFIVAR_CERT_CACHE_DIR}\"\` whenever the variable is non-empty, without verifying that the path is a temporary directory (e.g., contains \`/tmp/\`). If \`_EFIVAR_CERT_CACHE_DIR\` is accidentally set to a non-temp path—through a variable-scoping bug, a sourcing issue, or environment injection—the \`rm -rf\` would silently delete arbitrary files.
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/efivar.sh\`
+Function: \`efivar_cert_cache_clear()\`, lines 131-137.
+
+## Impact
+
+Very low probability under normal use. However, in a hostile or misconfigured environment, any mechanism that can set shell variables (e.g., a malicious \`common.sh\` override via \`SB_ENEMA_LIB_DIR\`) could redirect the \`rm -rf\` to a critical path.
+
+## Proposed Fix
+
+Before calling \`rm -rf\`, assert that \`_EFIVAR_CERT_CACHE_DIR\` matches \`/tmp/*\` or a known safe prefix. A simple guard: \`[[ \"\${_EFIVAR_CERT_CACHE_DIR}\" == /tmp/* ]] || die \"Refusing to rm -rf unsafe cache path\"\`."
+
+      # ── Issues 14–17: maintainability ─────────────────────────────────────
+
+      - name: Issue 14
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[maintainability] _enroll_is_auth_file and _pk_is_auth_file duplicate identical WIN_CERT detection logic" \
+            --label "refactor,maintainability" \
+            --body "## Summary
+
+\`_enroll_is_auth_file()\` in \`enroll.sh\` (lines 97-110) and \`_pk_is_auth_file()\` in \`stage.sh\` (lines 152-159) are byte-for-byte identical: both check that the file is at least 24 bytes long and that bytes at offset 22-23 equal \`0xF1 0x0E\` (WIN_CERT_TYPE_EFI_GUID). A third copy of this same detection heuristic exists inline in \`_dbx_esl_from_auth_or_raw()\`.
+
+## Location
+
+- \`enroll.sh\` lines 97-110 (\`_enroll_is_auth_file\`)
+- \`stage.sh\` lines 152-159 (\`_pk_is_auth_file\`)
+- \`stage.sh\` lines 510-514 (\`_dbx_esl_from_auth_or_raw\`, inline)
+
+## Impact
+
+Any future update to the detection logic (e.g., supporting a new auth format or adding a size check) must be applied to at least three places. A partial update introduces inconsistent behavior: one code path correctly detects the new format while another does not.
+
+## Proposed Fix
+
+Extract a single \`efi_is_auth_file <file>\` helper in \`efivar.sh\` (or \`common.sh\`) and replace all three call sites with calls to the shared function."
+
+      - name: Issue 15
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[maintainability] EFI binary structure offsets and markers are bare magic numbers with no named constants" \
+            --label "refactor,maintainability" \
+            --body "## Summary
+
+The EFI_VARIABLE_AUTHENTICATION_2 structure layout is referenced via bare integer offsets (16, 22, 24, 28, 77) and hex literals (\`f10e\`, \`0x0EF1\`) in multiple files without named constants or comments citing the UEFI specification. The 77-byte auth header written by \`_pk_wrap_esl()\` is a hex blob whose field boundaries are entirely undocumented in code.
+
+## Location
+
+- \`stage.sh\`: \`_pk_wrap_esl()\` line 182, \`_pk_is_auth_file()\` line 156, \`_dbx_esl_from_auth_or_raw()\` lines 512-521
+- \`enroll.sh\`: \`_enroll_is_auth_file()\` lines 104-109
+- \`efivar.sh\`: \`efivar_extract_certs()\` lines 228-296
+
+## Impact
+
+Reviewers and future contributors must cross-reference the UEFI spec (§32.3.2) and Windows Authenticode PE spec manually to understand each magic number. This increases review time and the risk of introducing an off-by-one bug when modifying offset arithmetic.
+
+## Proposed Fix
+
+Define named constants in \`common.sh\` or a new \`efi-structs.sh\`: e.g., \`EFI_AUTH2_WINCERT_TYPE_OFFSET=22\`, \`EFI_AUTH2_WIN_CERT_TYPE_EFI_GUID=f10e\`, \`EFI_AUTH2_WINCERT_LEN_OFFSET=16\`, \`EFI_SIGNATURE_LIST_HEADER_SIZE=28\`. Add a comment on each constant citing the UEFI spec section."
+
+      - name: Issue 16
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[maintainability] SHA-256 fingerprint normalization pipeline is duplicated across five or more call sites" \
+            --label "refactor,maintainability" \
+            --body "## Summary
+
+The pipeline \`openssl x509 ... -fingerprint -sha256 | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]'\` (and minor variants) appears in at least five locations: \`safety.sh\` (\`safety_check_setup_mode\`, \`safety_verify_write\`), \`enroll.sh\` (\`_enroll_staged_fingerprints\`), \`stage.sh\` (\`_stage_cert_fp\`), and \`efivar.sh\` (\`_efivar_cert_summary\`, \`efivar_list_certs\`). The normalization step (strip colons, lowercase) differs slightly between sites: some use \`s/://g\`, others omit it or rely on the caller to normalize.
+
+## Location
+
+- \`safety.sh\` lines 62-64, 265-266
+- \`enroll.sh\` lines 50-53
+- \`stage.sh\` lines 331-345 (\`_stage_cert_fp\`)
+- \`efivar.sh\` lines 338, 385
+
+## Impact
+
+Inconsistent normalization means fingerprint comparisons across call sites can fail spuriously (uppercase vs lowercase, colons present vs absent). Any future change to the fingerprint format (e.g., switching to SHA-512) requires updates in five or more places.
+
+## Proposed Fix
+
+Introduce a single \`_fp_normalize <raw_fingerprint_string>\` helper in \`common.sh\` or \`certdb.sh\` that strips everything before the last \`=\`, removes colons, and lowercases. Replace all fingerprint normalization pipeline repetitions with calls to this helper."
+
+      - name: Issue 17
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[maintainability] enroll() mixes orchestration, preview, confirmation, and per-variable write concerns" \
+            --label "refactor,maintainability" \
+            --body "## Summary
+
+The \`enroll()\` function in \`enroll.sh\` (lines 188-253) performs six distinct responsibilities in sequence: safety preflight, staged fingerprint collection, delta computation, preview display, user confirmation, and per-variable \`efi-updatevar\` writes. This monolithic structure makes it hard to unit-test individual stages, reuse the write step from higher-level orchestrators, or extend the pipeline (e.g., to add a dry-run mode or a non-interactive path).
+
+## Location
+
+\`sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll.sh\`
+Function: \`enroll()\`, lines 188-253.
+
+## Impact
+
+- Adding a \`--dry-run\` flag requires conditional logic throughout the single function.
+- A non-interactive caller (CI, automated testing) must mock both the preview and the confirmation step to exercise the write logic.
+- A bug in the preview display path can mask a bug in the write path, as the two are interleaved.
+
+## Proposed Fix
+
+Split \`enroll()\` into: \`enroll_preflight()\` (safety + integrity checks), \`enroll_preview()\` (compute delta + display + confirm), and \`enroll_apply()\` (per-variable writes + verification). The public \`enroll()\` function becomes a thin orchestrator that calls the three stages in sequence."
