@@ -132,17 +132,45 @@ safety_check_battery() {
 }
 
 # ---------------------------------------------------------------------------
-# safety_check_payload_integrity()
+# safety_check_payload_integrity [--skip-integrity-check]
 #   Verify SHA-256 checksums of all .auth payload files against the manifest
 #   at /mnt/data/sb-enema/payloads/SHA256SUMS.
-#   Returns 0 if all checksums match or no manifest exists, 1 on mismatch.
+#   Returns 0 if all checksums match, 1 on mismatch or absent manifest.
+#
+#   A missing manifest is treated as a hard-block failure to prevent an
+#   attacker from bypassing integrity checks by deleting the manifest file.
+#
+#   Pass --skip-integrity-check to suppress the missing-manifest error and
+#   return 0 when no manifest exists.  Only use this flag when operating in
+#   an environment where a manifest is intentionally absent (e.g. testing or
+#   a development build that has not yet generated SHA256SUMS).
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2120  # --skip-integrity-check is an optional flag; safety_preflight calls this without arguments
 safety_check_payload_integrity() {
+    local skip_missing=0
+    if [[ "${1:-}" == "--skip-integrity-check" ]]; then
+        skip_missing=1
+    fi
+
     local manifest="${DATA_MOUNT}/sb-enema/payloads/SHA256SUMS"
 
     if [[ ! -f "${manifest}" ]]; then
-        log_warn "No SHA256SUMS manifest found at ${manifest}; skipping payload integrity check"
-        return 0
+        if [[ "${skip_missing}" -eq 1 ]]; then
+            log_warn "No SHA256SUMS manifest found at ${manifest}; skipping payload integrity check (--skip-integrity-check)"
+            return 0
+        fi
+        log_error "SAFETY BLOCK: SHA256SUMS manifest not found at ${manifest}"
+        echo
+        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+        echo -e "${RED}  BLOCKED: Payload integrity manifest is missing${RESET}"
+        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+        echo
+        echo "  The SHA256SUMS manifest at:"
+        echo "    ${manifest}"
+        echo "  is absent.  Enrollment cannot proceed without payload integrity"
+        echo "  verification.  Re-create the USB drive from a trusted source."
+        echo
+        return 1
     fi
 
     log_info "Verifying payload integrity against ${manifest}"
