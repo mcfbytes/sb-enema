@@ -507,9 +507,16 @@ _dbx_esl_from_auth_or_raw() {
     local src="$1"
     local out="$2"
 
+    # File must be at least 24 bytes to contain the WIN_CERTIFICATE type field at offset 22.
+    # Shorter files cannot be auth files; fall through to the raw-ESL path.
+    local fsize
+    fsize=$(wc -c < "${src}" 2>/dev/null || echo 0)
+
     # Detect EFI_VARIABLE_AUTHENTICATION_2: wCertificateType = 0x0EF1 at offset 22
-    local type_bytes
-    type_bytes=$(dd if="${src}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    local type_bytes=""
+    if [[ "${fsize}" -ge 24 ]]; then
+        type_bytes=$(dd if="${src}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    fi
 
     if [[ "${type_bytes}" == "f10e" ]]; then
         # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset 16
