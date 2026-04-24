@@ -241,7 +241,7 @@ fi
 safety_verify_write() { return 0; }
 
 # ---------------------------------------------------------------------------
-# Test 5: efi-updatevar succeeds and verification succeeds — SUCCESS recorded.
+# Test 5: efi-updatevar succeeds and verification succeeds — VERIFIED recorded.
 # ---------------------------------------------------------------------------
 echo "--- Test 5: efi-updatevar succeeds and verification succeeds ---"
 

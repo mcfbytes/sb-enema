@@ -161,9 +161,10 @@ _enroll_var() {
         log_action "ENROLL" "${varname}" "WRITE_OK" "SHA256=${sha256}"
 
         # Post-write verification (if expected fingerprints provided).
-        # Only record SUCCESS and add to the enrolled list AFTER verification
-        # passes, so the audit trail never reports a verified enrollment for
-        # a write whose fingerprint check failed.
+        # Record WRITE_OK after the firmware write succeeds, but only record
+        # VERIFIED and add to the enrolled list AFTER verification passes, so
+        # the audit trail never reports a verified enrollment for a write
+        # whose fingerprint check failed.
         if [[ -n "${expected_fps}" ]] && ! safety_verify_write "${varname}" "${expected_fps}"; then
             log_action "VERIFY" "${varname}" "FAIL" "post-write verification failed"
             local enrolled_str="${_enrolled_ref[*]:-}"
