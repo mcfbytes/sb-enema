@@ -10,7 +10,8 @@
 #   5. Present manifest + missing payload file → fails (returns 1).
 #
 # Requirements on the host:
-#   - bash 4.2+  (associative arrays, [[ ]], ${var:-default})
+#   - bash
+#   - sha256sum (coreutils) for manifest generation and verification
 #
 # Usage:
 #   bash scripts/test-safety.sh

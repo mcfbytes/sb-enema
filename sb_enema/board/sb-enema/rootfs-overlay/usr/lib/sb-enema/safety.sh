@@ -135,7 +135,8 @@ safety_check_battery() {
 # safety_check_payload_integrity [--skip-integrity-check]
 #   Verify SHA-256 checksums of all .auth payload files against the manifest
 #   at /mnt/data/sb-enema/payloads/SHA256SUMS.
-#   Returns 0 if all checksums match, 1 on mismatch or absent manifest.
+#   Returns 0 if all checksums match; returns 1 on mismatch or on absent
+#   manifest unless --skip-integrity-check is provided.
 #
 #   A missing manifest is treated as a hard-block failure to prevent an
 #   attacker from bypassing integrity checks by deleting the manifest file.
