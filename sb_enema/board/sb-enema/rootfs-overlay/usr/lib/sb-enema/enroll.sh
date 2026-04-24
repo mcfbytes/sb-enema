@@ -158,10 +158,12 @@ _enroll_var() {
     if [[ "${rc}" -eq 0 ]]; then
         local sha256
         sha256=$(sha256sum "${auth_file}" | awk '{print $1}')
-        log_action "ENROLL" "${varname}" "SUCCESS" "SHA256=${sha256}"
-        _enrolled_ref+=("${varname}")
+        log_action "ENROLL" "${varname}" "WRITE_OK" "SHA256=${sha256}"
 
-        # Post-write verification (if expected fingerprints provided)
+        # Post-write verification (if expected fingerprints provided).
+        # Only record SUCCESS and add to the enrolled list AFTER verification
+        # passes, so the audit trail never reports a verified enrollment for
+        # a write whose fingerprint check failed.
         if [[ -n "${expected_fps}" ]] && ! safety_verify_write "${varname}" "${expected_fps}"; then
             log_action "VERIFY" "${varname}" "FAIL" "post-write verification failed"
             local enrolled_str="${_enrolled_ref[*]:-}"
@@ -169,6 +171,9 @@ _enroll_var() {
             echo -e "${RED}  Re-enter Setup Mode and try again.${RESET}"
             return 1
         fi
+
+        log_action "ENROLL" "${varname}" "VERIFIED" "SHA256=${sha256}"
+        _enrolled_ref+=("${varname}")
         return 0
     elif [[ "${rc}" -eq 124 ]]; then
         log_action "ENROLL" "${varname}" "FAIL" "efi-updatevar timed out after 30 seconds"

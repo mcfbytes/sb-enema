@@ -182,6 +182,91 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 4: efi-updatevar succeeds but post-write verification fails.
+#   Regression test: SUCCESS must NOT be logged for the variable (and the
+#   variable must NOT be added to the enrolled array) when verification fails.
+# ---------------------------------------------------------------------------
+echo "--- Test 4: efi-updatevar succeeds but verification fails ---"
+
+timeout() {
+    [[ "$1" =~ ^[0-9]+$ ]] || { echo "stub: expected numeric timeout, got '$1'" >&2; return 1; }
+    shift
+    "$@"
+}
+efi-updatevar() { return 0; }
+export -f timeout efi-updatevar
+
+# Override the earlier stub: simulate a verification failure for this test.
+safety_verify_write() { return 1; }
+
+# Capture audit log output by pointing AUDIT_LOG_FILE at a temp file.
+AUDIT_LOG_FILE="$(mktemp)"
+export AUDIT_LOG_FILE
+trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}" "${DUMMY_AUTH}" "${AUDIT_LOG_FILE}"' EXIT
+
+enrolled=()
+output=$(_enroll_var "db" "${DUMMY_AUTH}" enrolled "deadbeef" 2>&1) && rc=0 || rc=$?
+
+if [[ "${rc}" -ne 0 ]]; then
+    pass "_enroll_var returns non-zero on verification failure"
+else
+    fail "_enroll_var unexpectedly returned 0 on verification failure"
+fi
+
+if [[ "${enrolled[*]:-}" == "" ]]; then
+    pass "_enroll_var did not add variable to enrolled array on verification failure"
+else
+    fail "_enroll_var incorrectly added variable to enrolled array on verification failure: '${enrolled[*]:-}'"
+fi
+
+if ! grep -q '|ENROLL|db|VERIFIED|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log does not contain ENROLL VERIFIED entry for db when verification fails"
+else
+    fail "audit log unexpectedly contains ENROLL VERIFIED entry for db when verification failed"
+fi
+
+if ! grep -q '|ENROLL|db|SUCCESS|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log does not contain ENROLL SUCCESS entry for db when verification fails"
+else
+    fail "audit log unexpectedly contains ENROLL SUCCESS entry for db when verification failed"
+fi
+
+if grep -q '|VERIFY|db|FAIL|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log records VERIFY FAIL entry for db on verification failure"
+else
+    fail "audit log missing VERIFY FAIL entry for db on verification failure"
+fi
+
+# Restore stub for any subsequent tests.
+safety_verify_write() { return 0; }
+
+# ---------------------------------------------------------------------------
+# Test 5: efi-updatevar succeeds and verification succeeds — SUCCESS recorded.
+# ---------------------------------------------------------------------------
+echo "--- Test 5: efi-updatevar succeeds and verification succeeds ---"
+
+: > "${AUDIT_LOG_FILE}"
+
+enrolled=()
+if _enroll_var "db" "${DUMMY_AUTH}" enrolled "deadbeef" 2>/dev/null; then
+    pass "_enroll_var returns 0 when both write and verification succeed"
+else
+    fail "_enroll_var unexpectedly returned non-zero when both write and verification succeed"
+fi
+
+if [[ "${enrolled[*]:-}" == "db" ]]; then
+    pass "_enroll_var added 'db' to enrolled array after successful verification"
+else
+    fail "_enroll_var did not add 'db' to enrolled array after successful verification: '${enrolled[*]:-}'"
+fi
+
+if grep -q '|ENROLL|db|VERIFIED|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log contains ENROLL VERIFIED entry for db after successful verification"
+else
+    fail "audit log missing ENROLL VERIFIED entry for db after successful verification"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
