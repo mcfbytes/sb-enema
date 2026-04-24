@@ -266,6 +266,57 @@ else
     fail "audit log missing ENROLL VERIFIED entry for db after successful verification"
 fi
 
+# Negative assertion: the legacy "ENROLL ... SUCCESS" status must not be
+# reintroduced on the success path; only WRITE_OK + VERIFIED are expected.
+if ! grep -q '|ENROLL|db|SUCCESS|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log does not contain legacy ENROLL SUCCESS entry on success path"
+else
+    fail "audit log unexpectedly contains legacy ENROLL SUCCESS entry on success path"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 6: efi-updatevar succeeds with no expected fingerprints — verification
+#   is skipped, so VERIFIED must NOT be logged (UNVERIFIED is logged instead).
+# ---------------------------------------------------------------------------
+echo "--- Test 6: efi-updatevar succeeds with no expected fingerprints (verification skipped) ---"
+
+: > "${AUDIT_LOG_FILE}"
+
+# Make safety_verify_write fail loudly if it is called -- it must not run when
+# no expected fingerprints were passed.
+safety_verify_write() {
+    fail "safety_verify_write was called when expected_fps was empty"
+    return 1
+}
+
+enrolled=()
+if _enroll_var "db" "${DUMMY_AUTH}" enrolled 2>/dev/null; then
+    pass "_enroll_var returns 0 when write succeeds and no fingerprints supplied"
+else
+    fail "_enroll_var unexpectedly returned non-zero when write succeeds and no fingerprints supplied"
+fi
+
+if [[ "${enrolled[*]:-}" == "db" ]]; then
+    pass "_enroll_var added 'db' to enrolled array when no fingerprints supplied"
+else
+    fail "_enroll_var did not add 'db' to enrolled array when no fingerprints supplied: '${enrolled[*]:-}'"
+fi
+
+if ! grep -q '|ENROLL|db|VERIFIED|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log does not contain ENROLL VERIFIED entry when verification was skipped"
+else
+    fail "audit log incorrectly contains ENROLL VERIFIED entry when verification was skipped"
+fi
+
+if grep -q '|ENROLL|db|UNVERIFIED|' "${AUDIT_LOG_FILE}"; then
+    pass "audit log records ENROLL UNVERIFIED entry when verification was skipped"
+else
+    fail "audit log missing ENROLL UNVERIFIED entry when verification was skipped"
+fi
+
+# Restore stub for any subsequent tests.
+safety_verify_write() { return 0; }
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
