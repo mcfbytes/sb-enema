@@ -85,6 +85,20 @@ export DATA_MOUNT="${MOCK_DATA}"
 # ---------------------------------------------------------------------------
 SCENARIO="${1:-setup-mode}"
 
+# ---------------------------------------------------------------------------
+# Helper: write a uint32 as 4 little-endian bytes using octal escapes.
+# Used by ESL-building scenarios (extract-certs, extract-certs-trailing-bytes).
+# ---------------------------------------------------------------------------
+_write_u32_le() {
+    local v=$1
+    local b0 b1 b2 b3
+    b0=$(printf '%03o' $((v & 0xff)))
+    b1=$(printf '%03o' $(((v >> 8) & 0xff)))
+    b2=$(printf '%03o' $(((v >> 16) & 0xff)))
+    b3=$(printf '%03o' $(((v >> 24) & 0xff)))
+    printf "\\${b0}\\${b1}\\${b2}\\${b3}"
+}
+
 case "${SCENARIO}" in
     setup-mode)
         # No EFI variable files → all variables appear empty.
@@ -275,16 +289,6 @@ case "${SCENARIO}" in
             | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]')
 
         # --- Step 2: build EFI_SIGNATURE_LIST binary ---
-        # Helper: write a uint32 as 4 little-endian bytes using octal escapes.
-        _write_u32_le() {
-            local v=$1
-            local b0 b1 b2 b3
-            b0=$(printf '%03o' $((v & 0xff)))
-            b1=$(printf '%03o' $(((v >> 8) & 0xff)))
-            b2=$(printf '%03o' $(((v >> 16) & 0xff)))
-            b3=$(printf '%03o' $(((v >> 24) & 0xff)))
-            printf "\\${b0}\\${b1}\\${b2}\\${b3}"
-        }
 
         DER_SIZE=$(wc -c < "${EXTRACT_WORKDIR}/test.der")
         # SignatureSize = 16-byte owner GUID + DER cert
@@ -390,15 +394,6 @@ case "${SCENARIO}" in
             | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]')
 
         # --- Step 2: build EFI_SIGNATURE_LIST binary with 3 trailing garbage bytes ---
-        _write_u32_le() {
-            local v=$1
-            local b0 b1 b2 b3
-            b0=$(printf '%03o' $((v & 0xff)))
-            b1=$(printf '%03o' $(((v >> 8) & 0xff)))
-            b2=$(printf '%03o' $(((v >> 16) & 0xff)))
-            b3=$(printf '%03o' $(((v >> 24) & 0xff)))
-            printf "\\${b0}\\${b1}\\${b2}\\${b3}"
-        }
 
         DER_SIZE=$(wc -c < "${EXTRACT_WORKDIR}/test.der")
         SIG_SIZE=$((16 + DER_SIZE))
