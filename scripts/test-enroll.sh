@@ -8,7 +8,7 @@
 #
 # Requirements on the host:
 #   - bash 4+
-#   - openssl  (for sha256sum used by _enroll_var on success)
+#   - sha256sum  (used by _enroll_var on success; from coreutils or BusyBox)
 #
 # Usage:
 #   bash scripts/test-enroll.sh
@@ -28,7 +28,11 @@ MOCK_EFIVARS="$(mktemp -d)"
 MOCK_DATA="$(mktemp -d)"
 MOCK_PAYLOADS="$(mktemp -d)"
 MOCK_KEYS="$(mktemp -d)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}"' EXIT
+# Create a placeholder auth file using portable mktemp (no GNU --suffix).
+_dummy_auth_tmp="$(mktemp)"
+DUMMY_AUTH="${_dummy_auth_tmp}.auth"
+mv "${_dummy_auth_tmp}" "${DUMMY_AUTH}"
+trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}" "${DUMMY_AUTH}"' EXIT
 
 export EFIVARS_DIR="${MOCK_EFIVARS}"
 export DATA_MOUNT="${MOCK_DATA}"
@@ -69,11 +73,9 @@ log_init
 echo "=== SB-ENEMA _enroll_var() timeout handling test ==="
 echo
 
-# Create a minimal dummy auth file for testing
-DUMMY_AUTH="$(mktemp --suffix=.auth)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}" "${DUMMY_AUTH}"' EXIT
-# Write a fake WIN_CERTIFICATE header so _enroll_is_auth_file() returns 1 (raw ESL path)
-# — we just need any valid file for the tests
+# Create a minimal placeholder file for testing (set up above with portable mktemp).
+# Write a non-auth file so _enroll_is_auth_file() returns 1 and exercises the
+# raw ESL path; we just need a simple placeholder file for these tests.
 dd if=/dev/zero bs=1 count=32 2>/dev/null > "${DUMMY_AUTH}"
 
 # Stub safety_verify_write to always succeed (not the focus of these tests)
