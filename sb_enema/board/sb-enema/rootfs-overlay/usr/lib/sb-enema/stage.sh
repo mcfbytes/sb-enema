@@ -606,12 +606,17 @@ _stage_build_dbx_payload() {
     local raw_esl="${workdir}/dbx-raw.esl"
     _dbx_esl_from_auth_or_raw "${dbx_src}" "${raw_esl}"
 
-    # Save raw ESL to PAYLOAD_DIR/dbx/ for the preview engine hash count
-    cp "${raw_esl}" "${PAYLOAD_DIR}/dbx/dbx.esl"
-
+    # Sign first; only publish the raw ESL to PAYLOAD_DIR/dbx/ after signing
+    # succeeds, so a failed signing step cannot leave a stale unsigned ESL in
+    # the preview directory (which would cause stage_microsoft_kek_db_dbx() to
+    # skip re-staging while dbx.auth is absent or zero-length).
     sign-efi-sig-list -g "${owner_guid}" \
         -k "${kek_key}" -c "${kek_crt}" \
         dbx "${raw_esl}" "${PAYLOAD_DIR}/dbx.auth"
+
+    # Save raw ESL to PAYLOAD_DIR/dbx/ for the preview engine hash count
+    cp "${raw_esl}" "${PAYLOAD_DIR}/dbx/dbx.esl"
+
     local sha256
     sha256=$(sha256sum "${PAYLOAD_DIR}/dbx.auth" | awk '{print $1}')
     log_action "STAGE" "dbx.auth" "SUCCESS" "signed by user KEK SHA256=${sha256}"
