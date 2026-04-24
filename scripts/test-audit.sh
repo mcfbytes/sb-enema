@@ -38,6 +38,11 @@
 #               a real X509 cert and verify that efivar_extract_certs() correctly
 #               parses the binary ESL and extracts the DER cert with matching
 #               fingerprint.
+#   extract-certs-trailing-bytes
+#               Build a synthetic EFI_SIGNATURE_LIST binary with trailing garbage
+#               bytes appended (data_len not a multiple of sig_size) and verify
+#               that efivar_extract_certs() emits a log_warn about the trailing
+#               bytes while still successfully extracting the valid certificate.
 #
 # Examples:
 #   bash scripts/test-audit.sh
@@ -49,6 +54,7 @@
 #   bash scripts/test-audit.sh setup-mode-off
 #   bash scripts/test-audit.sh efivar-is-empty
 #   bash scripts/test-audit.sh extract-certs
+#   bash scripts/test-audit.sh extract-certs-trailing-bytes
 #
 set -euo pipefail
 
@@ -78,6 +84,20 @@ export DATA_MOUNT="${MOCK_DATA}"
 # Populate the mock efivarfs according to the requested scenario.
 # ---------------------------------------------------------------------------
 SCENARIO="${1:-setup-mode}"
+
+# ---------------------------------------------------------------------------
+# Helper: write a uint32 as 4 little-endian bytes using octal escapes.
+# Used by ESL-building scenarios (extract-certs, extract-certs-trailing-bytes).
+# ---------------------------------------------------------------------------
+_write_u32_le() {
+    local v=$1
+    local b0 b1 b2 b3
+    b0=$(printf '%03o' $((v & 0xff)))
+    b1=$(printf '%03o' $(((v >> 8) & 0xff)))
+    b2=$(printf '%03o' $(((v >> 16) & 0xff)))
+    b3=$(printf '%03o' $(((v >> 24) & 0xff)))
+    printf "\\${b0}\\${b1}\\${b2}\\${b3}"
+}
 
 case "${SCENARIO}" in
     setup-mode)
@@ -269,16 +289,6 @@ case "${SCENARIO}" in
             | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]')
 
         # --- Step 2: build EFI_SIGNATURE_LIST binary ---
-        # Helper: write a uint32 as 4 little-endian bytes using octal escapes.
-        _write_u32_le() {
-            local v=$1
-            local b0 b1 b2 b3
-            b0=$(printf '%03o' $((v & 0xff)))
-            b1=$(printf '%03o' $(((v >> 8) & 0xff)))
-            b2=$(printf '%03o' $(((v >> 16) & 0xff)))
-            b3=$(printf '%03o' $(((v >> 24) & 0xff)))
-            printf "\\${b0}\\${b1}\\${b2}\\${b3}"
-        }
 
         DER_SIZE=$(wc -c < "${EXTRACT_WORKDIR}/test.der")
         # SignatureSize = 16-byte owner GUID + DER cert
@@ -347,8 +357,126 @@ case "${SCENARIO}" in
             exit 1
         fi
         ;;
+    extract-certs-trailing-bytes)
+        # Verify that efivar_extract_certs() emits a log_warn when the ESL data
+        # section contains trailing bytes (data_len % sig_size != 0), while still
+        # successfully extracting the valid certificate(s) that precede them.
+
+        if ! command -v openssl >/dev/null 2>&1; then
+            echo "SKIP: openssl not available; skipping extract-certs-trailing-bytes test"
+            exit 0
+        fi
+
+        source "${SB_ENEMA_LIB_DIR}/common.sh"
+        source "${SB_ENEMA_LIB_DIR}/log.sh"
+        source "${SB_ENEMA_LIB_DIR}/efivar.sh"
+        log_init
+
+        EXTRACT_WORKDIR="$(mktemp -d)"
+        trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${EXTRACT_WORKDIR}"' EXIT
+
+        echo "Scenario: extract-certs-trailing-bytes — trailing bytes in ESL data section"
+        echo
+
+        all_pass=1
+
+        # --- Step 1: generate a test certificate ---
+        openssl req -new -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+            -subj "/CN=SB-ENEMA Trailing Bytes Test" \
+            -keyout "${EXTRACT_WORKDIR}/test.key" \
+            -out "${EXTRACT_WORKDIR}/test.crt" 2>/dev/null
+
+        openssl x509 -in "${EXTRACT_WORKDIR}/test.crt" \
+            -outform DER -out "${EXTRACT_WORKDIR}/test.der"
+
+        EXPECTED_FP=$(openssl x509 -in "${EXTRACT_WORKDIR}/test.crt" -noout \
+            -fingerprint -sha256 2>/dev/null \
+            | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]')
+
+        # --- Step 2: build EFI_SIGNATURE_LIST binary with 3 trailing garbage bytes ---
+
+        DER_SIZE=$(wc -c < "${EXTRACT_WORKDIR}/test.der")
+        SIG_SIZE=$((16 + DER_SIZE))
+        TRAILING_BYTES=3
+        # Inflate list_size to include trailing garbage so data_len % sig_size != 0
+        LIST_SIZE=$((28 + SIG_SIZE + TRAILING_BYTES))
+
+        EFI_IMAGE_SECURITY="d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+
+        {
+            # EFI_CERT_X509_GUID (LE)
+            printf '\xa1\x59\xc0\xa5\xe4\x94\xa7\x4a\x87\xb5\xab\x15\x5c\x2b\xf0\x72'
+            _write_u32_le "${LIST_SIZE}"
+            _write_u32_le 0
+            _write_u32_le "${SIG_SIZE}"
+            # SignatureOwner GUID (dummy)
+            printf '\x07\xe0\xc3\x77\xe6\xac\x46\x23\x88\x2f\xe6\x3f\x7b\xa7\xe0\x13'
+            # DER certificate data
+            cat "${EXTRACT_WORKDIR}/test.der"
+            # Trailing garbage bytes (not a multiple of sig_size)
+            printf '\xde\xad\xbe'
+        } > "${EXTRACT_WORKDIR}/esl_payload.bin"
+
+        # --- Step 3: write mock efivarfs file (4-byte attr prefix + ESL) ---
+        {
+            printf '\x07\x00\x00\x00'
+            cat "${EXTRACT_WORKDIR}/esl_payload.bin"
+        } > "${MOCK_EFIVARS}/db-${EFI_IMAGE_SECURITY}"
+
+        # --- Step 4: call efivar_extract_certs and capture output for warning check ---
+        EXTRACT_OUT="${EXTRACT_WORKDIR}/out"
+        mkdir -p "${EXTRACT_OUT}"
+
+        STDOUT_LOG="${EXTRACT_WORKDIR}/stdout.log"
+        if efivar_extract_certs db "${EXTRACT_OUT}" 2>/dev/null >"${STDOUT_LOG}"; then
+            echo "PASS: efivar_extract_certs returned 0"
+        else
+            echo "FAIL: efivar_extract_certs returned non-zero" >&2
+            all_pass=0
+        fi
+
+        # --- Step 5: verify DER was still extracted despite trailing bytes ---
+        if [[ -f "${EXTRACT_OUT}/db-0.der" ]]; then
+            echo "PASS: db-0.der was created despite trailing bytes"
+        else
+            echo "FAIL: db-0.der was NOT created — valid cert before trailing bytes was dropped" >&2
+            all_pass=0
+        fi
+
+        # --- Step 6: verify fingerprint of extracted cert ---
+        if [[ -f "${EXTRACT_OUT}/db-0.der" ]]; then
+            ACTUAL_FP=$(openssl x509 -in "${EXTRACT_OUT}/db-0.der" -inform DER -noout \
+                -fingerprint -sha256 2>/dev/null \
+                | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]')
+
+            if [[ "${EXPECTED_FP}" == "${ACTUAL_FP}" ]]; then
+                echo "PASS: extracted cert fingerprint matches original (${ACTUAL_FP})"
+            else
+                echo "FAIL: fingerprint mismatch" >&2
+                echo "  Expected: ${EXPECTED_FP}" >&2
+                echo "  Actual:   ${ACTUAL_FP}" >&2
+                all_pass=0
+            fi
+        fi
+
+        # --- Step 7: verify log_warn was emitted about trailing bytes ---
+        if grep -q "trailing byte" "${STDOUT_LOG}"; then
+            echo "PASS: log_warn about trailing bytes was emitted"
+        else
+            echo "FAIL: expected log_warn about trailing bytes was NOT found in output" >&2
+            echo "  captured output:" >&2
+            cat "${STDOUT_LOG}" >&2
+            all_pass=0
+        fi
+
+        if [[ "${all_pass}" -eq 1 ]]; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
     *)
-        echo "Unknown scenario '${SCENARIO}'. Valid choices: setup-mode (default), with-vars, secure-boot-on, secure-boot-off, setup-mode-on, setup-mode-off, efivar-is-empty, extract-certs" >&2
+        echo "Unknown scenario '${SCENARIO}'. Valid choices: setup-mode (default), with-vars, secure-boot-on, secure-boot-off, setup-mode-on, setup-mode-off, efivar-is-empty, extract-certs, extract-certs-trailing-bytes" >&2
         exit 1
         ;;
 esac

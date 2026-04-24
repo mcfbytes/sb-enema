@@ -290,6 +290,10 @@ efivar_extract_certs() {
                         fi
                         i=$(( i + 1 ))
                     done
+                    local remainder=$(( data_len % sig_size ))
+                    if [[ "${remainder}" -ne 0 ]]; then
+                        log_warn "EFI_SIGNATURE_LIST at offset ${offset} (${varname}): data_len=${data_len} is not a multiple of sig_size=${sig_size}; ${remainder} trailing byte(s) ignored"
+                    fi
                 fi
             fi
 
