@@ -150,10 +150,10 @@ _enroll_var() {
         log_info "Payload is a raw ESL; using Setup Mode write (-e -f)"
     fi
 
-    log_info "Running: efi-updatevar ${efi_args[*]} ${auth_file} ${varname}"
+    log_info "Running: timeout 30 efi-updatevar ${efi_args[*]} ${auth_file} ${varname}"
 
     local rc=0
-    efi-updatevar "${efi_args[@]}" "${auth_file}" "${varname}" || rc=$?
+    timeout 30 efi-updatevar "${efi_args[@]}" "${auth_file}" "${varname}" || rc=$?
 
     if [[ "${rc}" -eq 0 ]]; then
         local sha256
@@ -170,6 +170,13 @@ _enroll_var() {
             return 1
         fi
         return 0
+    elif [[ "${rc}" -eq 124 ]]; then
+        log_action "ENROLL" "${varname}" "FAIL" "efi-updatevar timed out after 30 seconds"
+        log_error "Firmware did not respond within 30 seconds while enrolling ${varname}"
+        local enrolled_str="${_enrolled_ref[*]:-}"
+        _enroll_report_partial_failure "${varname}" "${enrolled_str:-(none)}"
+        echo -e "${RED}  The firmware did not respond. Reboot and retry enrollment.${RESET}"
+        return 1
     else
         log_action "ENROLL" "${varname}" "FAIL" "efi-updatevar returned exit code ${rc}"
         log_error "Failed to enroll ${varname}"
