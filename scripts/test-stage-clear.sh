@@ -3,13 +3,19 @@
 # in a local mock environment.
 #
 # Validates the following scenarios:
-#   1. Empty PAYLOAD_DIR → guard dies (returns non-zero).
-#   2. Relative PAYLOAD_DIR → guard dies (returns non-zero).
-#   3. Absolute path without expected prefix (/etc/...) → guard dies.
-#   4. Valid /tmp/... path → guard passes.
-#   5. Valid /mnt/... path → guard passes.
-#   6. stage_clear() removes non-microsoft items and preserves microsoft/ contents.
-#   7. stage_clear() on a non-existent PAYLOAD_DIR creates the directory.
+#   1.  Empty PAYLOAD_DIR → guard dies (returns non-zero).
+#   2.  Relative PAYLOAD_DIR → guard dies (returns non-zero).
+#   3.  Absolute path without expected prefix (/etc/...) → guard dies.
+#   4.  Exact mount root /tmp → guard dies.
+#   5.  Exact mount root /tmp/ → guard dies.
+#   6.  Exact mount root /mnt → guard dies.
+#   7.  Path traversal /tmp/.. → guard dies.
+#   8.  Path traversal /tmp/valid/../.. → guard dies.
+#   9.  Symlink PAYLOAD_DIR pointing to a real /tmp/... dir → guard dies.
+#   10. Valid /tmp/... path → guard passes.
+#   11. Valid /mnt/... path → guard passes.
+#   12. stage_clear() removes non-microsoft items and preserves microsoft/ contents.
+#   13. stage_clear() on a non-existent PAYLOAD_DIR creates the directory.
 #
 # Requirements on the host:
 #   - bash 4+
@@ -103,9 +109,80 @@ echo "--- Test 3: /etc/... PAYLOAD_DIR → guard must reject ---"
    || pass "guard correctly rejected /etc/... PAYLOAD_DIR"
 
 # ---------------------------------------------------------------------------
-# Test 4: Valid /tmp/... path → guard must pass
+# Test 4: Exact mount root /tmp → guard must die
 # ---------------------------------------------------------------------------
-echo "--- Test 4: /tmp/... PAYLOAD_DIR → guard must accept ---"
+echo "--- Test 4: exact /tmp PAYLOAD_DIR → guard must reject ---"
+
+(
+    PAYLOAD_DIR="/tmp"
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for /tmp PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected /tmp PAYLOAD_DIR"
+
+# ---------------------------------------------------------------------------
+# Test 5: Exact mount root /tmp/ → guard must die
+# ---------------------------------------------------------------------------
+echo "--- Test 5: exact /tmp/ PAYLOAD_DIR → guard must reject ---"
+
+(
+    PAYLOAD_DIR="/tmp/"
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for /tmp/ PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected /tmp/ PAYLOAD_DIR"
+
+# ---------------------------------------------------------------------------
+# Test 6: Exact mount root /mnt → guard must die
+# ---------------------------------------------------------------------------
+echo "--- Test 6: exact /mnt PAYLOAD_DIR → guard must reject ---"
+
+(
+    PAYLOAD_DIR="/mnt"
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for /mnt PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected /mnt PAYLOAD_DIR"
+
+# ---------------------------------------------------------------------------
+# Test 7: Path traversal /tmp/.. → guard must die
+# ---------------------------------------------------------------------------
+echo "--- Test 7: /tmp/.. PAYLOAD_DIR → guard must reject ---"
+
+(
+    PAYLOAD_DIR="/tmp/.."
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for /tmp/.. PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected /tmp/.. PAYLOAD_DIR"
+
+# ---------------------------------------------------------------------------
+# Test 8: Path traversal /tmp/valid/../.. → guard must die
+# ---------------------------------------------------------------------------
+echo "--- Test 8: /tmp/valid/../.. PAYLOAD_DIR → guard must reject ---"
+
+(
+    PAYLOAD_DIR="/tmp/valid/../.."
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for /tmp/valid/../.. PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected /tmp/valid/../.. PAYLOAD_DIR"
+
+# ---------------------------------------------------------------------------
+# Test 9: Symlink pointing to a real /tmp/... directory → guard must die
+# ---------------------------------------------------------------------------
+echo "--- Test 9: symlink PAYLOAD_DIR → guard must reject ---"
+
+_sym_target="$(mktemp -d -t sb-enema-symtarget-XXXXXX)"
+_sym_link="$(mktemp -u -t sb-enema-symlink-XXXXXX)"
+ln -s "${_sym_target}" "${_sym_link}"
+(
+    PAYLOAD_DIR="${_sym_link}"
+    _stage_assert_payload_dir_safe 2>/dev/null
+) && fail "guard passed for symlink PAYLOAD_DIR (should have rejected)" \
+   || pass "guard correctly rejected symlink PAYLOAD_DIR"
+rm -f "${_sym_link}"
+rm -rf "${_sym_target}"
+
+# ---------------------------------------------------------------------------
+# Test 10: Valid /tmp/... path → guard must pass
+# ---------------------------------------------------------------------------
+echo "--- Test 10: /tmp/... PAYLOAD_DIR → guard must accept ---"
 
 (
     PAYLOAD_DIR="/tmp/sb-enema-test/payloads"
@@ -114,9 +191,9 @@ echo "--- Test 4: /tmp/... PAYLOAD_DIR → guard must accept ---"
    || fail "guard rejected valid /tmp/... PAYLOAD_DIR (should have accepted)"
 
 # ---------------------------------------------------------------------------
-# Test 5: Valid /mnt/... path → guard must pass
+# Test 11: Valid /mnt/... path → guard must pass
 # ---------------------------------------------------------------------------
-echo "--- Test 5: /mnt/data/... PAYLOAD_DIR → guard must accept ---"
+echo "--- Test 11: /mnt/data/... PAYLOAD_DIR → guard must accept ---"
 
 (
     PAYLOAD_DIR="/mnt/data/sb-enema/payloads"
@@ -125,9 +202,9 @@ echo "--- Test 5: /mnt/data/... PAYLOAD_DIR → guard must accept ---"
    || fail "guard rejected valid /mnt/data/... PAYLOAD_DIR (should have accepted)"
 
 # ---------------------------------------------------------------------------
-# Test 6: stage_clear() removes non-microsoft items and preserves microsoft/
+# Test 12: stage_clear() removes non-microsoft items and preserves microsoft/
 # ---------------------------------------------------------------------------
-echo "--- Test 6: stage_clear() removes non-microsoft, preserves microsoft/ ---"
+echo "--- Test 12: stage_clear() removes non-microsoft, preserves microsoft/ ---"
 
 STAGE_DIR="$(mktemp -d -t sb-enema-stage-XXXXXX)"
 
@@ -155,9 +232,9 @@ fi
 [[ -n "${STAGE_DIR:-}" && "${STAGE_DIR}" == /tmp/* ]] && rm -rf "${STAGE_DIR}"
 
 # ---------------------------------------------------------------------------
-# Test 7: stage_clear() on a non-existent PAYLOAD_DIR creates the directory
+# Test 13: stage_clear() on a non-existent PAYLOAD_DIR creates the directory
 # ---------------------------------------------------------------------------
-echo "--- Test 7: stage_clear() creates PAYLOAD_DIR if absent ---"
+echo "--- Test 13: stage_clear() creates PAYLOAD_DIR if absent ---"
 
 NEW_DIR="$(mktemp -d -t sb-enema-newdir-XXXXXX)"
 [[ -n "${NEW_DIR:-}" && "${NEW_DIR}" == /tmp/* ]] && rm -rf "${NEW_DIR}"   # ensure it does not exist yet
