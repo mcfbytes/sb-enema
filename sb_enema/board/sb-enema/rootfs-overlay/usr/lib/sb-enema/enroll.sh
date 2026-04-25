@@ -266,7 +266,7 @@ enroll_apply() {
     #   2 — staged cert files present but ALL failed to parse; this is a hard
     #       failure because continuing would silently skip cryptographic
     #       confirmation that the correct key was written.
-    local pk_fps kek_fps rc
+    local pk_fps kek_fps rc=0
     pk_fps=$(_enroll_staged_fingerprints "PK") || rc=$?
     if [[ "${rc:-0}" -eq 2 ]]; then
         log_action "ENROLL" "PK" "FAIL" "staged certificate files present but none could be parsed"
