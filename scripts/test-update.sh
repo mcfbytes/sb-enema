@@ -190,6 +190,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 4: efivar_cert_cache_clear rejects non-/tmp paths
+# ---------------------------------------------------------------------------
+echo "--- Test 4: efivar_cert_cache_clear rejects unsafe cache path ---"
+
+# Directly inject an unsafe path into _EFIVAR_CERT_CACHE_DIR and confirm
+# that efivar_cert_cache_clear() calls die() rather than running rm -rf.
+_EFIVAR_CERT_CACHE_DIR="/etc/important"
+rc=0
+(efivar_cert_cache_clear 2>/dev/null) || rc=$?
+if [[ "${rc}" -ne 0 ]]; then
+    pass "efivar_cert_cache_clear refused unsafe path /etc/important (exit ${rc})"
+else
+    fail "efivar_cert_cache_clear should have rejected /etc/important but did not"
+fi
+# Restore the global to empty so subsequent code is unaffected.
+_EFIVAR_CERT_CACHE_DIR=""
+
+# Confirm that a legitimate /tmp/... path is accepted without error.
+_safe_cache_dir=$(mktemp -d)
+_EFIVAR_CERT_CACHE_DIR="${_safe_cache_dir}"
+rc=0
+efivar_cert_cache_clear 2>/dev/null || rc=$?
+if [[ "${rc}" -eq 0 ]] && [[ ! -d "${_safe_cache_dir}" ]]; then
+    pass "efivar_cert_cache_clear accepted and removed safe /tmp path"
+elif [[ "${rc}" -ne 0 ]]; then
+    fail "efivar_cert_cache_clear unexpectedly rejected a safe /tmp path (exit ${rc})"
+    rm -rf "${_safe_cache_dir}"
+else
+    fail "efivar_cert_cache_clear accepted safe /tmp path but directory was not removed"
+    rm -rf "${_safe_cache_dir}"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

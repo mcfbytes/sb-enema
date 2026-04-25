@@ -131,6 +131,8 @@ efivar_cert_cache_init() {
 #   Release the cert extraction cache.
 efivar_cert_cache_clear() {
     if [[ -n "${_EFIVAR_CERT_CACHE_DIR}" ]]; then
+        [[ "${_EFIVAR_CERT_CACHE_DIR}" == /tmp/* ]] \
+            || die "Refusing to rm -rf unsafe cache path: ${_EFIVAR_CERT_CACHE_DIR}"
         rm -rf "${_EFIVAR_CERT_CACHE_DIR}"
         _EFIVAR_CERT_CACHE_DIR=""
     fi
