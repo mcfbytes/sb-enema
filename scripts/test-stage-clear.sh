@@ -8,7 +8,7 @@
 #   3. Absolute path without expected prefix (/etc/...) → guard dies.
 #   4. Valid /tmp/... path → guard passes.
 #   5. Valid /mnt/... path → guard passes.
-#   6. stage_clear() removes non-microsoft items and preserves microsoft/.
+#   6. stage_clear() removes non-microsoft items and preserves microsoft/ contents.
 #   7. stage_clear() on a non-existent PAYLOAD_DIR creates the directory.
 #
 # Requirements on the host:
@@ -30,7 +30,8 @@ export CERTDB_DIR="${SB_ENEMA_LIB_DIR}/known-certs"
 # ---------------------------------------------------------------------------
 MOCK_EFIVARS="$(mktemp -d)"
 MOCK_DATA="$(mktemp -d)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}"' EXIT
+STAGE_DIR=""   # set later, once mktemp is called for Test 6
+trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}"; [[ -n "${STAGE_DIR:-}" && "${STAGE_DIR}" == /tmp/* ]] && rm -rf "${STAGE_DIR}"' EXIT
 
 export EFIVARS_DIR="${MOCK_EFIVARS}"
 export DATA_MOUNT="${MOCK_DATA}"
@@ -129,7 +130,6 @@ echo "--- Test 5: /mnt/data/... PAYLOAD_DIR → guard must accept ---"
 echo "--- Test 6: stage_clear() removes non-microsoft, preserves microsoft/ ---"
 
 STAGE_DIR="$(mktemp -d -t sb-enema-stage-XXXXXX)"
-trap '[[ -n "${STAGE_DIR:-}" && "${STAGE_DIR}" == /tmp/* ]] && rm -rf "${STAGE_DIR}"' EXIT
 
 mkdir -p "${STAGE_DIR}/microsoft"
 touch "${STAGE_DIR}/microsoft/PK.auth"
