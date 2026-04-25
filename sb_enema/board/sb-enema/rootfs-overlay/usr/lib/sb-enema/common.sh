@@ -244,8 +244,8 @@ efivar_is_auth_file() {
     # Read the 24-byte WIN_CERTIFICATE_UEFI_GUID header (offsets 16..39) in a
     # single dd call to minimize subshell churn and avoid races on slow I/O.
     local hdr
-    hdr=$(dd if="${file}" bs=1 skip=${EFI_AUTH2_WINCERT_LEN_OFFSET} \
-                              count=${EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE} 2>/dev/null \
+    hdr=$(dd if="${file}" bs=1 skip="${EFI_AUTH2_WINCERT_LEN_OFFSET}" \
+                              count="${EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE}" 2>/dev/null \
             | od -An -tx1 -v | tr -d ' \n') || return 1
     [[ "${#hdr}" -eq $((EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE * 2)) ]] || return 1
     # Hex-string offsets within hdr are 2 chars/byte, relative to byte

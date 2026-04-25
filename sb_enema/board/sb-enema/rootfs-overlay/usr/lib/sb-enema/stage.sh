@@ -273,8 +273,16 @@ _pk_wrap_esl() {
     #     31 00               SET, length 0        (SignerInfos = empty)
     local pkcs7_empty_hex='3023020101310f300d06096086480165030402010500300b06092a864886f70d0107013100'
 
-    if ! printf '%s' "${efi_time_hex}${wincert_hdr_hex}${pkcs7_empty_hex}" \
-            | xxd -r -p > "${dst}" \
+    # Convert the concatenated hex string into a printf escape sequence
+    # ("\xNN\xNN..."), then emit raw bytes via printf %b.  Avoids depending
+    # on xxd, which is not enabled in the busybox build.
+    local hex_all="${efi_time_hex}${wincert_hdr_hex}${pkcs7_empty_hex}"
+    local i escapes=""
+    for (( i = 0; i < ${#hex_all}; i += 2 )); do
+        escapes+="\\x${hex_all:i:2}"
+    done
+
+    if ! printf '%b' "${escapes}" > "${dst}" \
        || ! cat "${src}" >> "${dst}"; then
         rm -f "${dst}"
         die "_pk_wrap_esl: failed to write auth-wrapped PK payload to ${dst}"
@@ -606,7 +614,7 @@ _dbx_esl_from_auth_or_raw() {
         # EFI_AUTH2_WINCERT_LEN_OFFSET (=16), then strip the
         # EFI_TIME + WIN_CERTIFICATE_UEFI_GUID prefix to expose the raw ESL.
         local len_bytes win_cert_len esl_offset
-        len_bytes=$(dd if="${src}" bs=1 skip=${EFI_AUTH2_WINCERT_LEN_OFFSET} count=4 2>/dev/null \
+        len_bytes=$(dd if="${src}" bs=1 skip="${EFI_AUTH2_WINCERT_LEN_OFFSET}" count=4 2>/dev/null \
                       | od -An -tx1 | tr -d ' \n')
         win_cert_len=$(( 16#${len_bytes:6:2} * 16777216 + 16#${len_bytes:4:2} * 65536 + \
                          16#${len_bytes:2:2} * 256 + 16#${len_bytes:0:2} ))
