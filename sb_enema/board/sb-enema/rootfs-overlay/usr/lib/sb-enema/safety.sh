@@ -50,42 +50,46 @@ safety_check_setup_mode() {
 
     # Check if PK already matches the user-owned certificate on the USB drive.
     if ! efivar_is_empty PK; then
-        local tmpdir
-        tmpdir=$(mktemp -d) || {
-            log_warn "Cannot check PK match: failed to create temp dir"
-            return 0
-        }
-        if efivar_extract_certs PK "${tmpdir}" 2>/dev/null && \
-                [[ -f "${tmpdir}/PK-0.der" ]]; then
-            local fp
-            fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
-                    -fingerprint -sha256 2>/dev/null \
-                    | sed 's/.*Fingerprint=//;s/://g' \
-                    | tr '[:upper:]' '[:lower:]') || fp=""
-            if [[ -n "${fp}" ]]; then
-                local ownership
-                ownership=$(certdb_identify_ownership_model "${fp}")
-                if [[ "${ownership}" == "user" ]]; then
-                    rm -rf "${tmpdir}"
-                    log_error "SAFETY BLOCK: PK already matches the certificate on this USB drive."
-                    echo
-                    echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
-                    echo -e "${RED}  BLOCKED: PK already matches the USB drive certificate${RESET}"
-                    echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
-                    echo
-                    echo "  Re-enrollment is not needed. The PK in firmware already matches"
-                    echo "  the certificate on this exFAT volume."
-                    echo
-                    echo "  If you need to re-enroll, first enter Setup Mode:"
-                    echo "    1. Reboot into BIOS/UEFI firmware setup"
-                    echo "    2. Clear all Secure Boot keys to enable Setup Mode"
-                    echo "    3. Boot SB-ENEMA again"
-                    echo
-                    return 1
+        # Run the PK-match check in a subshell so the EXIT trap for tmpdir
+        # cleanup is confined to this scope and does not affect callers.
+        (
+            local tmpdir
+            tmpdir=$(mktemp -d) || {
+                log_warn "Cannot check PK match: failed to create temp dir"
+                return 0
+            }
+            # shellcheck disable=SC2064
+            trap "rm -rf '${tmpdir}'" EXIT
+            if efivar_extract_certs PK "${tmpdir}" 2>/dev/null && \
+                    [[ -f "${tmpdir}/PK-0.der" ]]; then
+                local fp
+                fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
+                        -fingerprint -sha256 2>/dev/null \
+                        | sed 's/.*Fingerprint=//;s/://g' \
+                        | tr '[:upper:]' '[:lower:]') || fp=""
+                if [[ -n "${fp}" ]]; then
+                    local ownership
+                    ownership=$(certdb_identify_ownership_model "${fp}")
+                    if [[ "${ownership}" == "user" ]]; then
+                        log_error "SAFETY BLOCK: PK already matches the certificate on this USB drive."
+                        echo
+                        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+                        echo -e "${RED}  BLOCKED: PK already matches the USB drive certificate${RESET}"
+                        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+                        echo
+                        echo "  Re-enrollment is not needed. The PK in firmware already matches"
+                        echo "  the certificate on this exFAT volume."
+                        echo
+                        echo "  If you need to re-enroll, first enter Setup Mode:"
+                        echo "    1. Reboot into BIOS/UEFI firmware setup"
+                        echo "    2. Clear all Secure Boot keys to enable Setup Mode"
+                        echo "    3. Boot SB-ENEMA again"
+                        echo
+                        return 1
+                    fi
                 fi
             fi
-        fi
-        rm -rf "${tmpdir}"
+        ) || return 1
     fi
 
     return 0
