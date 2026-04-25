@@ -57,12 +57,83 @@ readonly _STAGE_DBX2024_PCA2011_CA_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b
 KEK_UPDATE_MAP="${DATA_MOUNT}/sb-enema/kek_update_map.json"
 
 # ---------------------------------------------------------------------------
+# _stage_path_has_dot_segments()
+#   Return success (0) when the supplied absolute path contains "." or ".."
+#   segments, which must never be allowed to influence rm -rf targets.
+# ---------------------------------------------------------------------------
+_stage_path_has_dot_segments() {
+    case "${1}" in
+        */./*|*/../*|*/.|*/..)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# _stage_assert_payload_dir_safe()
+#   Validate that PAYLOAD_DIR is safe to pass to rm -rf:
+#     1. Non-empty string.
+#     2. Absolute path (starts with /).
+#     3. Not an exact top-level allowed mount root (/mnt, /mnt/, /tmp, /tmp/).
+#     4. Contains no "." or ".." path segments.
+#     5. Begins with an expected prefix (/mnt/ or /tmp/).
+#     6. If it exists, is not a symlink and resolves under the same prefixes.
+#   Calls die() on any violation so the caller never reaches rm -rf.
+# ---------------------------------------------------------------------------
+_stage_assert_payload_dir_safe() {
+    local payload_dir
+    local resolved_dir
+
+    payload_dir="${PAYLOAD_DIR:-}"
+
+    if [[ -z "${payload_dir}" ]]; then
+        die "PAYLOAD_DIR is empty; refusing to run rm -rf on an unsafe path"
+    fi
+
+    if [[ "${payload_dir}" != /* ]]; then
+        die "PAYLOAD_DIR ('${payload_dir}') is not an absolute path; refusing to run rm -rf"
+    fi
+
+    if [[ "${payload_dir}" == "/mnt" || "${payload_dir}" == "/mnt/" || "${payload_dir}" == "/tmp" || "${payload_dir}" == "/tmp/" ]]; then
+        die "PAYLOAD_DIR ('${payload_dir}') must not be an allowed mount root; refusing to run rm -rf"
+    fi
+
+    if _stage_path_has_dot_segments "${payload_dir}"; then
+        die "PAYLOAD_DIR ('${payload_dir}') contains '.' or '..' path segments; refusing to run rm -rf"
+    fi
+
+    if [[ "${payload_dir}" != /mnt/* && "${payload_dir}" != /tmp/* ]]; then
+        die "PAYLOAD_DIR ('${payload_dir}') does not start with an expected prefix (/mnt/ or /tmp/); refusing to run rm -rf"
+    fi
+
+    if [[ -e "${payload_dir}" ]]; then
+        if [[ -L "${payload_dir}" ]]; then
+            die "PAYLOAD_DIR ('${payload_dir}') is a symlink; refusing to run rm -rf"
+        fi
+
+        resolved_dir="$(readlink -f -- "${payload_dir}")" \
+            || die "Failed to canonicalize PAYLOAD_DIR ('${payload_dir}'); refusing to run rm -rf"
+
+        if [[ "${resolved_dir}" == "/mnt" || "${resolved_dir}" == "/mnt/" || "${resolved_dir}" == "/tmp" || "${resolved_dir}" == "/tmp/" ]]; then
+            die "Resolved PAYLOAD_DIR ('${resolved_dir}') must not be an allowed mount root; refusing to run rm -rf"
+        fi
+
+        if [[ "${resolved_dir}" != /mnt/* && "${resolved_dir}" != /tmp/* ]]; then
+            die "Resolved PAYLOAD_DIR ('${resolved_dir}') does not start with an expected prefix (/mnt/ or /tmp/); refusing to run rm -rf"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # stage_clear()
 #   Remove all staged content from PAYLOAD_DIR except the microsoft/
 #   subdirectory (which contains read-only pre-built payloads).
 # ---------------------------------------------------------------------------
 stage_clear() {
     log_info "Clearing staging area (preserving microsoft/ subdirectory)"
+
+    _stage_assert_payload_dir_safe
 
     if [[ ! -d "${PAYLOAD_DIR}" ]]; then
         mkdir -p "${PAYLOAD_DIR}"
@@ -152,21 +223,6 @@ stage_show_delta() {
 }
 
 # ---------------------------------------------------------------------------
-# _pk_is_auth_file <file>
-#   Returns 0 if <file> has a WIN_CERT_TYPE_EFI_GUID marker (0x0EF1) at
-#   byte offset 22, indicating an EFI_VARIABLE_AUTHENTICATION_2 auth file.
-#   Returns 1 for raw EFI Signature Lists (no auth header).
-# ---------------------------------------------------------------------------
-_pk_is_auth_file() {
-    local file="$1"
-    local fsize type_bytes
-    fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)
-    [[ "${fsize}" -ge 24 ]] || return 1
-    type_bytes=$(dd if="${file}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    [[ "${type_bytes}" == "f10e" ]]
-}
-
-# ---------------------------------------------------------------------------
 # _pk_wrap_esl <src_esl> <dst_auth>
 #   Prepend a 77-byte EFI_VARIABLE_AUTHENTICATION_2 header to the raw ESL
 #   <src_esl> and write the result to <dst_auth>.
@@ -186,9 +242,78 @@ _pk_is_auth_file() {
 _pk_wrap_esl() {
     local src="$1"
     local dst="$2"
-    # shellcheck disable=SC2059
-    if ! printf '\xda\x07\x03\x06\x13\x11\x15\x00\x00\x00\x00\x00\xff\x07\x00\x00\x3d\x00\x00\x00\x00\x02\xf1\x0e\x9d\xd2\xaf\x4a\xdf\x68\xee\x49\x8a\xa9\x34\x7d\x37\x56\x65\xa7\x30\x23\x02\x01\x01\x31\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x30\x0b\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x07\x01\x31\x00' > "${dst}" || \
-       ! cat "${src}" >> "${dst}"; then
+
+    # The 77-byte EFI_VARIABLE_AUTHENTICATION_2 header is assembled from
+    # labeled hex segments below.  Each segment maps directly to a field of
+    # the UEFI structure; sizes are noted in the comments.  Total = 77 bytes.
+
+    # EFI_TIME (UEFI §8.3) — 16 bytes, fixed timestamp 2010-03-06T19:17:21Z
+    # with TimeZone=0x07FF (unspecified) and zeroed Pad1/Nanosecond/Daylight/Pad2.
+    # Bytes: Year(2) Month Day Hour Min Sec Pad1 Nano(4) TZ(2) DST Pad2
+    local efi_time_hex='da0703061311150000000000ff070000'
+
+    # WIN_CERTIFICATE_UEFI_GUID (UEFI §32.4.1) — 24 bytes.
+    #   dwLength             = computed below from segment sizes
+    #                          (= EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE +
+    #                             sizeof(pkcs7_empty_hex))
+    #   wRevision            = 0x0200 (EFI_WIN_CERT_REVISION_LE_HEX)
+    #   wCertificateType     = 0x0EF1 = WIN_CERT_TYPE_EFI_GUID
+    #                          (EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX)
+    #   CertType GUID        = EFI_CERT_TYPE_PKCS7_GUID
+    #                          (EFI_CERT_TYPE_PKCS7_GUID_LE_HEX)
+    # PKCS#7-style empty SignedData CertData — 37 bytes, the minimum
+    # DER-encoded "empty" SignedData accepted as the AuthInfo.CertData.
+    # This is what the Microsoft secureboot_objects build emits in
+    # Imaging/PK.bin and what the firmware unconditionally accepts in
+    # Setup Mode (UEFI §32.3.2: when PK is NULL, any valid
+    # EFI_VARIABLE_AUTHENTICATION_2 is accepted).
+    #
+    # DER decode (37 bytes total):
+    #   30 23                 SEQUENCE, length 35  (SignedData)
+    #     02 01 01            INTEGER 1            (CMSVersion)
+    #     31 0f               SET, length 15       (DigestAlgorithmIdentifiers)
+    #       30 0d 06 09 60 86 48 01 65 03 04 02 01 05 00
+    #                         AlgorithmIdentifier { id-sha256, NULL }
+    #     30 0b               SEQUENCE, length 11  (EncapContentInfo)
+    #       06 09 2a 86 48 86 f7 0d 01 07 01
+    #                         OID 1.2.840.113549.1.7.1 (id-data)
+    #     31 00               SET, length 0        (SignerInfos = empty)
+    local pkcs7_empty_hex='3023020101310f300d06096086480165030402010500300b06092a864886f70d0107013100'
+
+    # Compute dwLength from segment sizes so the WIN_CERTIFICATE header
+    # cannot silently desync from its CertData payload if the latter is
+    # ever edited.  Format as 4-byte little-endian hex.
+    local pkcs7_size=$(( ${#pkcs7_empty_hex} / 2 ))
+    local wincert_dwlen=$(( EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE + pkcs7_size ))
+    local wincert_dwlen_hex
+    wincert_dwlen_hex=$(printf '%02x%02x%02x%02x' \
+        $((  wincert_dwlen        & 0xff )) \
+        $(( (wincert_dwlen >>  8) & 0xff )) \
+        $(( (wincert_dwlen >> 16) & 0xff )) \
+        $(( (wincert_dwlen >> 24) & 0xff )))
+    local wincert_hdr_hex="${wincert_dwlen_hex}${EFI_WIN_CERT_REVISION_LE_HEX}${EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX}${EFI_CERT_TYPE_PKCS7_GUID_LE_HEX}"
+
+    # Convert the concatenated hex string into a printf escape sequence
+    # ("\xNN\xNN..."), then emit raw bytes via printf %b.  Avoids depending
+    # on xxd, which is not enabled in the busybox build.
+    local hex_all="${efi_time_hex}${wincert_hdr_hex}${pkcs7_empty_hex}"
+
+    # Assertion: the assembled header must be exactly
+    # EFI_AUTH2_FIXED_HEADER_SIZE (= EFI_TIME + WIN_CERTIFICATE header)
+    # + CertData.  This catches any future edit that desyncs the segments.
+    local expected_total=$(( EFI_AUTH2_FIXED_HEADER_SIZE + pkcs7_size ))
+    local actual_total=$(( ${#hex_all} / 2 ))
+    if (( actual_total != expected_total )); then
+        die "_pk_wrap_esl: internal error: assembled header is ${actual_total} bytes; expected ${expected_total}"
+    fi
+
+    local i escapes=""
+    for (( i = 0; i < ${#hex_all}; i += 2 )); do
+        escapes+="\\x${hex_all:i:2}"
+    done
+
+    if ! printf '%b' "${escapes}" > "${dst}" \
+       || ! cat "${src}" >> "${dst}"; then
         rm -f "${dst}"
         die "_pk_wrap_esl: failed to write auth-wrapped PK payload to ${dst}"
     fi
@@ -234,7 +359,7 @@ stage_microsoft_pk() {
 
     if [[ ! -f "${PAYLOAD_DIR}/PK.auth" ]]; then
         local src="${MSFT_PAYLOADS_SUBDIR}/PK.auth"
-        if _pk_is_auth_file "${src}"; then
+        if efivar_is_auth_file "${src}"; then
             cp "${src}" "${PAYLOAD_DIR}/PK.auth"
         else
             log_info "microsoft/PK.auth is a raw ESL (pre-Imaging build); wrapping with time-based auth header"
@@ -343,8 +468,7 @@ _stage_cert_fp() {
             # substitution will fail and we return success with empty output.
             set +e +o pipefail
             openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//;s/://g' \
-                | tr '[:upper:]' '[:lower:]'
+                | _fp_normalize
         )
     )"; then
         return 0
@@ -371,7 +495,8 @@ _stage_build_kek_esl() {
     : > "${combined_esl}"
 
     local user_kek_esl="${workdir}/KEK-user.esl"
-    cert-to-efi-sig-list -g "${owner_guid}" "${kek_crt}" "${user_kek_esl}"
+    cert-to-efi-sig-list -g "${owner_guid}" "${kek_crt}" "${user_kek_esl}" \
+        || die "cert-to-efi-sig-list failed for user KEK certificate ${kek_crt}"
     cat "${user_kek_esl}" >> "${combined_esl}"
     log_info "Added user KEK certificate"
 
@@ -406,7 +531,8 @@ _stage_build_kek_esl() {
                 log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
                 continue
             fi
-            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for Microsoft KEK certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added Microsoft KEK certificate: $(basename "${cert_file}")"
         done
@@ -429,7 +555,8 @@ _stage_build_kek_esl() {
             vendor_tmp_esl="${workdir}/KEK-vendor-$(basename "${vendor_der}").esl"
             vendor_cert_pem="${workdir}/KEK-vendor-$(basename "${vendor_der%.*}").pem"
             openssl x509 -inform DER -in "${vendor_der}" -out "${vendor_cert_pem}"
-            cert-to-efi-sig-list -g "${owner_guid}" "${vendor_cert_pem}" "${vendor_tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${vendor_cert_pem}" "${vendor_tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for vendor KEK certificate $(basename "${vendor_der}")"
             cat "${vendor_tmp_esl}" >> "${combined_esl}"
             log_info "Added staged vendor KEK certificate: $(basename "${vendor_der}")"
         done
@@ -482,7 +609,8 @@ _stage_build_db_esl() {
                 log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
                 continue
             fi
-            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for db certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added db certificate: $(basename "${cert_file}")"
         done
@@ -515,17 +643,16 @@ _dbx_esl_from_auth_or_raw() {
     local src="$1"
     local out="$2"
 
-    # Detect EFI_VARIABLE_AUTHENTICATION_2: wCertificateType = 0x0EF1 at offset 22
-    local type_bytes
-    type_bytes=$(dd if="${src}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
-
-    if [[ "${type_bytes}" == "f10e" ]]; then
-        # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset 16
+    if efivar_is_auth_file "${src}"; then
+        # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset
+        # EFI_AUTH2_WINCERT_LEN_OFFSET (=16), then strip the
+        # EFI_TIME + WIN_CERTIFICATE_UEFI_GUID prefix to expose the raw ESL.
         local len_bytes win_cert_len esl_offset
-        len_bytes=$(dd if="${src}" bs=1 skip=16 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+        len_bytes=$(dd if="${src}" bs=1 skip="${EFI_AUTH2_WINCERT_LEN_OFFSET}" count=4 2>/dev/null \
+                      | od -An -tx1 | tr -d ' \n')
         win_cert_len=$(( 16#${len_bytes:6:2} * 16777216 + 16#${len_bytes:4:2} * 65536 + \
                          16#${len_bytes:2:2} * 256 + 16#${len_bytes:0:2} ))
-        esl_offset=$(( 16 + win_cert_len ))
+        esl_offset=$(( EFI_AUTH2_WINCERT_LEN_OFFSET + win_cert_len ))
         tail -c "+$((esl_offset + 1))" "${src}" > "${out}"  # tail -c +N is 1-indexed
         log_info "Stripped EFI_VARIABLE_AUTHENTICATION_2 header from $(basename "${src}") (ESL at offset ${esl_offset})"
     else
@@ -607,12 +734,17 @@ _stage_build_dbx_payload() {
     local raw_esl="${workdir}/dbx-raw.esl"
     _dbx_esl_from_auth_or_raw "${dbx_src}" "${raw_esl}"
 
-    # Save raw ESL to PAYLOAD_DIR/dbx/ for the preview engine hash count
-    cp "${raw_esl}" "${PAYLOAD_DIR}/dbx/dbx.esl"
-
+    # Sign first; only publish the raw ESL to PAYLOAD_DIR/dbx/ after signing
+    # succeeds, so a failed signing step cannot leave a stale unsigned ESL in
+    # the preview directory (which would cause stage_microsoft_kek_db_dbx() to
+    # skip re-staging while dbx.auth is absent or zero-length).
     sign-efi-sig-list -g "${owner_guid}" \
         -k "${kek_key}" -c "${kek_crt}" \
         dbx "${raw_esl}" "${PAYLOAD_DIR}/dbx.auth"
+
+    # Save raw ESL to PAYLOAD_DIR/dbx/ for the preview engine hash count
+    cp "${raw_esl}" "${PAYLOAD_DIR}/dbx/dbx.esl"
+
     local sha256
     sha256=$(sha256sum "${PAYLOAD_DIR}/dbx.auth" | awk '{print $1}')
     log_action "STAGE" "dbx.auth" "SUCCESS" "signed by user KEK SHA256=${sha256}"
@@ -640,6 +772,7 @@ stage_user_pk_kek() {
     done
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     mkdir -p "${PAYLOAD_DIR}/PK" "${PAYLOAD_DIR}/KEK" "${PAYLOAD_DIR}/dbx"
 
@@ -709,6 +842,7 @@ stage_user_kek_db() {
     done
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     mkdir -p "${PAYLOAD_DIR}/KEK" "${PAYLOAD_DIR}/db"
 
@@ -793,6 +927,7 @@ stage_sign_db() {
     fi
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     local workdir
     workdir=$(mktemp -d) || die "Failed to create temp directory"
@@ -834,6 +969,7 @@ stage_sign_kek() {
     # clobber any RETURN trap set by a calling function.
     (
         OWNER_GUID=$(keygen_load_or_generate_guid)
+        keygen_assert_valid_guid "${OWNER_GUID}"
 
         local workdir
         workdir=$(mktemp -d) || die "Failed to create temp directory"
@@ -935,7 +1071,7 @@ stage_bios_entries() {
             # Compute SHA-1 fingerprint — used to look up certs in kek_update_map.json
             local sha1_hex
             sha1_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha1 2>/dev/null \
-                       | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                       | _fp_normalize) || {
                 log_warn "Could not compute SHA-1 for ${varname}-${idx}.der; skipping"
                 idx=$((idx + 1))
                 continue
@@ -944,7 +1080,7 @@ stage_bios_entries() {
             # Compute SHA-256 fingerprint — used for test-cert and Microsoft-cert checks
             local sha256_hex
             sha256_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                         | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                         | _fp_normalize) || {
                 log_warn "Could not compute SHA-256 for ${varname}-${idx}.der; skipping"
                 idx=$((idx + 1))
                 continue

@@ -75,7 +75,7 @@ jobs:
             br-host-${{ runner.os }}-
 
       - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2.21
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           max-size: 4G
 
@@ -115,7 +115,7 @@ jobs:
             dist/sb-enema.img
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/sb-enema.zip

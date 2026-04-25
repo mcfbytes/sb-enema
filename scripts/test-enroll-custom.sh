@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# test-enroll-custom.sh — Test _custom_load_or_generate_owner_guid() in a
-# local mock environment.
+# test-enroll-custom.sh — Tests for the user-key ("Custom-Owned") enrollment
+# helpers that live in keygen.sh and stage.sh.
 #
-# Validates three scenarios:
-#   1. No owner-guid.txt file — a new UUID must be generated and persisted.
-#   2. owner-guid.txt with a valid UUID — that UUID must be loaded unchanged.
-#   3. owner-guid.txt with an invalid value — a new UUID must be generated.
+# These helpers replaced an earlier enroll-custom.sh module:
+#   keygen_load_or_generate_guid()   (was _custom_load_or_generate_owner_guid)
+#   _stage_build_db_esl()            (was _custom_build_db_esl)
+#
+# Validates:
+#   1. keygen_load_or_generate_guid:
+#      a. No owner-guid.txt — a new UUID is generated and persisted.
+#      b. Valid owner-guid.txt — the existing UUID is loaded unchanged.
+#      c. Invalid owner-guid.txt — a new UUID is generated and persisted.
+#   2. _stage_build_db_esl:
+#      a. .der / .cer inputs are converted to PEM before being passed to
+#         cert-to-efi-sig-list (no DER bytes leak through).
+#      b. Every supported cert form (.der / .cer / .crt) is processed.
+#      c. The combined db.esl is non-empty.
 #
 # Requirements on the host:
 #   - bash 4+
 #   - /proc/sys/kernel/random/uuid  (available on any Linux 2.6+ kernel)
+#   - openssl                       (the _stage_build_db_esl tests are skipped
+#                                    if openssl is missing)
 #
 # Usage:
 #   bash scripts/test-enroll-custom.sh
@@ -27,10 +39,14 @@ export CERTDB_DIR="${SB_ENEMA_LIB_DIR}/known-certs"
 # ---------------------------------------------------------------------------
 MOCK_EFIVARS="$(mktemp -d)"
 MOCK_DATA="$(mktemp -d)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}"' EXIT
+MOCK_DB_WORKDIR="$(mktemp -d)"
+trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_DB_WORKDIR}"' EXIT
 
 export EFIVARS_DIR="${MOCK_EFIVARS}"
 export DATA_MOUNT="${MOCK_DATA}"
+# keygen.sh and update.sh derive KEYS_DIR and PAYLOAD_DIR from DATA_MOUNT at
+# source time, so isolation comes from DATA_MOUNT alone — do not pre-export
+# KEYS_DIR or PAYLOAD_DIR (they would be unconditionally overwritten).
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -51,19 +67,20 @@ source "${SB_ENEMA_LIB_DIR}/efivar.sh"
 source "${SB_ENEMA_LIB_DIR}/certdb.sh"
 # shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/safety.sh
 source "${SB_ENEMA_LIB_DIR}/safety.sh"
-# update.sh defines PAYLOAD_DIR which enroll-custom.sh references at source time
 # shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/update.sh
 source "${SB_ENEMA_LIB_DIR}/update.sh"
 # shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/preview.sh
 source "${SB_ENEMA_LIB_DIR}/preview.sh"
 # shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/report.sh
 source "${SB_ENEMA_LIB_DIR}/report.sh"
-# shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/enroll-custom.sh
-source "${SB_ENEMA_LIB_DIR}/enroll-custom.sh"
+# shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/keygen.sh
+source "${SB_ENEMA_LIB_DIR}/keygen.sh"
+# shellcheck source=../sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema/stage.sh
+source "${SB_ENEMA_LIB_DIR}/stage.sh"
 
 log_init
 
-echo "=== SB-ENEMA _custom_load_or_generate_owner_guid test ==="
+echo "=== SB-ENEMA Custom-Owned enrollment helpers test ==="
 echo
 
 # UUID format regex (8-4-4-4-12 hex digits, case-insensitive)
@@ -72,13 +89,13 @@ UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 GUID_FILE="${DATA_MOUNT}/sb-enema/owner-guid.txt"
 
 # ---------------------------------------------------------------------------
-# Test 1: No owner-guid.txt — a new UUID must be generated and persisted.
+# Test 1: No owner-guid.txt — a new UUID is generated and persisted.
 # ---------------------------------------------------------------------------
-echo "--- Test 1: no owner-guid.txt — generate and persist ---"
+echo "--- Test 1: keygen_load_or_generate_guid: no owner-guid.txt — generate and persist ---"
 
 rm -f "${GUID_FILE}"
 
-guid1=$(_custom_load_or_generate_owner_guid)
+guid1=$(keygen_load_or_generate_guid)
 
 if [[ "${guid1}" =~ ${UUID_RE} ]]; then
     pass "Generated UUID has correct format: ${guid1}"
@@ -100,14 +117,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 2: Valid owner-guid.txt — that UUID must be loaded unchanged.
+# Test 2: Valid owner-guid.txt — that UUID is loaded unchanged.
 # ---------------------------------------------------------------------------
-echo "--- Test 2: valid owner-guid.txt — load without regeneration ---"
+echo "--- Test 2: keygen_load_or_generate_guid: valid owner-guid.txt — load without regeneration ---"
 
 KNOWN_GUID="deadbeef-1234-5678-9abc-def012345678"
 printf '%s\n' "${KNOWN_GUID}" > "${GUID_FILE}"
 
-guid2=$(_custom_load_or_generate_owner_guid)
+guid2=$(keygen_load_or_generate_guid)
 
 if [[ "${guid2}" == "${KNOWN_GUID}" ]]; then
     pass "Loaded UUID matches the file contents: ${guid2}"
@@ -124,13 +141,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 3: Invalid owner-guid.txt — a new UUID must be generated.
+# Test 3: Invalid owner-guid.txt — a new UUID is generated.
 # ---------------------------------------------------------------------------
-echo "--- Test 3: invalid owner-guid.txt — regenerate ---"
+echo "--- Test 3: keygen_load_or_generate_guid: invalid owner-guid.txt — regenerate ---"
 
 printf 'not-a-valid-guid\n' > "${GUID_FILE}"
 
-guid3=$(_custom_load_or_generate_owner_guid)
+guid3=$(keygen_load_or_generate_guid)
 
 if [[ "${guid3}" =~ ${UUID_RE} ]]; then
     pass "Regenerated UUID has correct format: ${guid3}"
@@ -154,18 +171,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Tests for _custom_build_db_esl() — DER and PEM certificate handling
+# Tests for _stage_build_db_esl() — DER and PEM certificate handling
 # ---------------------------------------------------------------------------
-echo "--- Test 4: _custom_build_db_esl converts .der/.cer to PEM before ESL conversion ---"
+echo "--- Test 4: _stage_build_db_esl converts .der/.cer to PEM before ESL conversion ---"
 
 if command -v openssl >/dev/null 2>&1; then
-    # Set up mock work/payload directories; clean up at script exit (not RETURN,
-    # which would fire on every function return due to bash RETURN trap semantics).
-    MOCK_DB_WORKDIR="$(mktemp -d)"
-    MOCK_DB_PAYLOADS="$(mktemp -d)"
-    # Extend the existing EXIT trap to also remove the new dirs.
-    trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_DB_WORKDIR}" "${MOCK_DB_PAYLOADS}"' EXIT
-
     # Generate a temporary test certificate (PEM)
     TEMP_KEY="${MOCK_DB_WORKDIR}/test.key"
     TEMP_CRT="${MOCK_DB_WORKDIR}/test.crt"
@@ -173,11 +183,12 @@ if command -v openssl >/dev/null 2>&1; then
         -subj "/CN=SB-ENEMA Test" \
         -keyout "${TEMP_KEY}" -out "${TEMP_CRT}" 2>/dev/null
 
-    # Create DER-encoded versions (.der and .cer) and a PEM copy (.crt)
-    mkdir -p "${MOCK_DB_PAYLOADS}/db"
-    openssl x509 -in "${TEMP_CRT}" -outform DER -out "${MOCK_DB_PAYLOADS}/db/test-cert.der"
-    openssl x509 -in "${TEMP_CRT}" -outform DER -out "${MOCK_DB_PAYLOADS}/db/test-cert.cer"
-    cp "${TEMP_CRT}" "${MOCK_DB_PAYLOADS}/db/test-cert.crt"
+    # Populate PAYLOAD_DIR/db with DER (.der and .cer) and PEM (.crt) variants.
+    mkdir -p "${PAYLOAD_DIR}/db"
+    rm -f "${PAYLOAD_DIR}/db"/*
+    openssl x509 -in "${TEMP_CRT}" -outform DER -out "${PAYLOAD_DIR}/db/test-cert.der"
+    openssl x509 -in "${TEMP_CRT}" -outform DER -out "${PAYLOAD_DIR}/db/test-cert.cer"
+    cp "${TEMP_CRT}" "${PAYLOAD_DIR}/db/test-cert.crt"
 
     # Stub cert-to-efi-sig-list: verify input is PEM, write a placeholder ESL.
     # Log paths are passed via exported env vars so the stub can find them even
@@ -213,38 +224,36 @@ if command -v openssl >/dev/null 2>&1; then
     }
     export -f cert-to-efi-sig-list
 
-    export CUSTOM_OWNER_GUID="deadbeef-1234-5678-9abc-def012345678"
-    export CUSTOM_PAYLOADS_DIR="${MOCK_DB_PAYLOADS}"
-
-    _custom_build_db_esl "${MOCK_DB_WORKDIR}"
+    OWNER_GUID="${KNOWN_GUID}"
+    _stage_build_db_esl "${MOCK_DB_WORKDIR}" "${OWNER_GUID}"
 
     # No format errors should have occurred (all inputs must be PEM)
     if [[ ! -s "${_STUB_ERRORS_LOG}" ]]; then
-        pass "_custom_build_db_esl: no DER/CER files passed raw to cert-to-efi-sig-list"
+        pass "_stage_build_db_esl: no DER/CER files passed raw to cert-to-efi-sig-list"
     else
-        fail "_custom_build_db_esl: DER/CER file(s) passed without PEM conversion:"
+        fail "_stage_build_db_esl: DER/CER file(s) passed without PEM conversion:"
         cat "${_STUB_ERRORS_LOG}" >&2
     fi
 
     # All three certs should have been processed
     call_count=$(wc -l < "${_STUB_CALLS_LOG}")
     if [[ "${call_count}" -eq 3 ]]; then
-        pass "_custom_build_db_esl: cert-to-efi-sig-list called for all 3 certificates"
+        pass "_stage_build_db_esl: cert-to-efi-sig-list called for all 3 certificates"
     else
-        fail "_custom_build_db_esl: expected 3 cert-to-efi-sig-list calls, got ${call_count}"
+        fail "_stage_build_db_esl: expected 3 cert-to-efi-sig-list calls, got ${call_count}"
     fi
 
     # Combined ESL must be non-empty
     if [[ -s "${MOCK_DB_WORKDIR}/db.esl" ]]; then
-        pass "_custom_build_db_esl: combined db.esl is non-empty"
+        pass "_stage_build_db_esl: combined db.esl is non-empty"
     else
-        fail "_custom_build_db_esl: combined db.esl is empty or missing"
+        fail "_stage_build_db_esl: combined db.esl is empty or missing"
     fi
 
     unset -f cert-to-efi-sig-list
     unset _STUB_CALLS_LOG _STUB_ERRORS_LOG
 else
-    echo "SKIP: openssl not available; skipping _custom_build_db_esl tests"
+    echo "SKIP: openssl not available; skipping _stage_build_db_esl tests"
 fi
 
 # ---------------------------------------------------------------------------

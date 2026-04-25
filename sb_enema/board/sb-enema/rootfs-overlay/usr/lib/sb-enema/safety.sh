@@ -18,14 +18,14 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/efivar.sh"
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/certdb.sh"
 
 # ---------------------------------------------------------------------------
-# safety_check_setup_mode()
-#   Hard block: refuse any write operation if:
-#     1. The system is NOT in Setup Mode, OR
-#     2. The current PK already matches the PK on the exFAT volume.
-#   Prints guidance on how to enter Setup Mode.
-#   Returns 0 if safe to proceed, 1 if blocked.
+# safety_assert_setup_mode()
+#   Verify the system is currently in UEFI Setup Mode.  On failure, prints
+#   the same guided message used by safety_check_setup_mode so callers that
+#   re-check Setup Mode mid-operation (e.g. between per-variable writes in
+#   enroll_apply) can surface actionable guidance.
+#   Returns 0 if in Setup Mode, 1 otherwise.
 # ---------------------------------------------------------------------------
-safety_check_setup_mode() {
+safety_assert_setup_mode() {
     local setup_mode
     setup_mode=$(efivar_get_setup_mode)
 
@@ -47,45 +47,61 @@ safety_check_setup_mode() {
         echo
         return 1
     fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# safety_check_setup_mode()
+#   Hard block: refuse any write operation if:
+#     1. The system is NOT in Setup Mode, OR
+#     2. The current PK already matches the PK on the exFAT volume.
+#   Prints guidance on how to enter Setup Mode.
+#   Returns 0 if safe to proceed, 1 if blocked.
+# ---------------------------------------------------------------------------
+safety_check_setup_mode() {
+    safety_assert_setup_mode || return 1
 
     # Check if PK already matches the user-owned certificate on the USB drive.
     if ! efivar_is_empty PK; then
-        local tmpdir
-        tmpdir=$(mktemp -d) || {
-            log_warn "Cannot check PK match: failed to create temp dir"
-            return 0
-        }
-        if efivar_extract_certs PK "${tmpdir}" 2>/dev/null && \
-                [[ -f "${tmpdir}/PK-0.der" ]]; then
-            local fp
-            fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
-                    -fingerprint -sha256 2>/dev/null \
-                    | sed 's/.*Fingerprint=//;s/://g' \
-                    | tr '[:upper:]' '[:lower:]') || fp=""
-            if [[ -n "${fp}" ]]; then
-                local ownership
-                ownership=$(certdb_identify_ownership_model "${fp}")
-                if [[ "${ownership}" == "user" ]]; then
-                    rm -rf "${tmpdir}"
-                    log_error "SAFETY BLOCK: PK already matches the certificate on this USB drive."
-                    echo
-                    echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
-                    echo -e "${RED}  BLOCKED: PK already matches the USB drive certificate${RESET}"
-                    echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
-                    echo
-                    echo "  Re-enrollment is not needed. The PK in firmware already matches"
-                    echo "  the certificate on this exFAT volume."
-                    echo
-                    echo "  If you need to re-enroll, first enter Setup Mode:"
-                    echo "    1. Reboot into BIOS/UEFI firmware setup"
-                    echo "    2. Clear all Secure Boot keys to enable Setup Mode"
-                    echo "    3. Boot SB-ENEMA again"
-                    echo
-                    return 1
+        # Run the PK-match check in a subshell so the EXIT trap for tmpdir
+        # cleanup is confined to this scope and does not affect callers.
+        (
+            local tmpdir
+            tmpdir=$(mktemp -d) || {
+                log_warn "Cannot check PK match: failed to create temp dir"
+                return 0
+            }
+            # shellcheck disable=SC2064
+            trap "rm -rf '${tmpdir}'" EXIT
+            if efivar_extract_certs PK "${tmpdir}" 2>/dev/null && \
+                    [[ -f "${tmpdir}/PK-0.der" ]]; then
+                local fp
+                fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
+                        -fingerprint -sha256 2>/dev/null \
+                        | _fp_normalize) || fp=""
+                if [[ -n "${fp}" ]]; then
+                    local ownership
+                    ownership=$(certdb_identify_ownership_model "${fp}")
+                    if [[ "${ownership}" == "user" ]]; then
+                        log_error "SAFETY BLOCK: PK already matches the certificate on this USB drive."
+                        echo
+                        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+                        echo -e "${RED}  BLOCKED: PK already matches the USB drive certificate${RESET}"
+                        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+                        echo
+                        echo "  Re-enrollment is not needed. The PK in firmware already matches"
+                        echo "  the certificate on this exFAT volume."
+                        echo
+                        echo "  If you need to re-enroll, first enter Setup Mode:"
+                        echo "    1. Reboot into BIOS/UEFI firmware setup"
+                        echo "    2. Clear all Secure Boot keys to enable Setup Mode"
+                        echo "    3. Boot SB-ENEMA again"
+                        echo
+                        return 1
+                    fi
                 fi
             fi
-        fi
-        rm -rf "${tmpdir}"
+        ) || return 1
     fi
 
     return 0
@@ -132,17 +148,46 @@ safety_check_battery() {
 }
 
 # ---------------------------------------------------------------------------
-# safety_check_payload_integrity()
+# safety_check_payload_integrity [--skip-integrity-check]
 #   Verify SHA-256 checksums of all .auth payload files against the manifest
 #   at /mnt/data/sb-enema/payloads/SHA256SUMS.
-#   Returns 0 if all checksums match or no manifest exists, 1 on mismatch.
+#   Returns 0 if all checksums match; returns 1 on mismatch or on absent
+#   manifest unless --skip-integrity-check is provided.
+#
+#   A missing manifest is treated as a hard-block failure to prevent an
+#   attacker from bypassing integrity checks by deleting the manifest file.
+#
+#   Pass --skip-integrity-check to suppress the missing-manifest error and
+#   return 0 when no manifest exists.  Only use this flag when operating in
+#   an environment where a manifest is intentionally absent (e.g. testing or
+#   a development build that has not yet generated SHA256SUMS).
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2120  # --skip-integrity-check is an optional flag; safety_preflight calls this without arguments
 safety_check_payload_integrity() {
+    local skip_missing=0
+    if [[ "${1:-}" == "--skip-integrity-check" ]]; then
+        skip_missing=1
+    fi
+
     local manifest="${DATA_MOUNT}/sb-enema/payloads/SHA256SUMS"
 
     if [[ ! -f "${manifest}" ]]; then
-        log_warn "No SHA256SUMS manifest found at ${manifest}; skipping payload integrity check"
-        return 0
+        if [[ "${skip_missing}" -eq 1 ]]; then
+            log_warn "No SHA256SUMS manifest found at ${manifest}; skipping payload integrity check (--skip-integrity-check)"
+            return 0
+        fi
+        log_error "SAFETY BLOCK: SHA256SUMS manifest not found at ${manifest}"
+        echo
+        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+        echo -e "${RED}  BLOCKED: Payload integrity manifest is missing${RESET}"
+        echo -e "${RED}══════════════════════════════════════════════════════════════${RESET}"
+        echo
+        echo "  The SHA256SUMS manifest at:"
+        echo "    ${manifest}"
+        echo "  is absent.  Enrollment cannot proceed without payload integrity"
+        echo "  verification.  Re-create the USB drive from a trusted source."
+        echo
+        return 1
     fi
 
     log_info "Verifying payload integrity against ${manifest}"
@@ -222,7 +267,7 @@ safety_verify_write() {
     local fp
     while IFS= read -r fp; do
         [[ -n "${fp}" ]] || continue
-        expected_normalized+=("$(printf '%s' "${fp}" | tr -d ':' | tr '[:upper:]' '[:lower:]')")
+        expected_normalized+=("$(_fp_normalize "${fp}")")
     done <<< "${expected_fps_raw}"
 
     if [[ ${#expected_normalized[@]} -eq 0 ]]; then
@@ -262,8 +307,7 @@ safety_verify_write() {
         log_info "  Checking cert ${idx}: openssl x509 -in ${varname}-${idx}.der -inform DER -noout -fingerprint -sha256"
         actual_fp=$(openssl x509 -in "${tmpdir}/${varname}-${idx}.der" -inform DER -noout \
                 -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//;s/://g' \
-                | tr '[:upper:]' '[:lower:]') || actual_fp=""
+                | _fp_normalize) || actual_fp=""
         log_info "  Cert ${idx} fingerprint: ${actual_fp}"
         actual_fps+=("${actual_fp}")
         local efp
