@@ -74,7 +74,7 @@ echo "=== SB-ENEMA _enroll_var() timeout handling test ==="
 echo
 
 # Create a minimal placeholder file for testing (set up above with portable mktemp).
-# Write a non-auth file so _enroll_is_auth_file() returns 1 and exercises the
+# Write a non-auth file so efi_is_auth_file() returns 1 and exercises the
 # raw ESL path; we just need a simple placeholder file for these tests.
 dd if=/dev/zero bs=1 count=32 2>/dev/null > "${DUMMY_AUTH}"
 

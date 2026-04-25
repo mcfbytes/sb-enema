@@ -215,21 +215,6 @@ stage_show_delta() {
 }
 
 # ---------------------------------------------------------------------------
-# _pk_is_auth_file <file>
-#   Returns 0 if <file> has a WIN_CERT_TYPE_EFI_GUID marker (0x0EF1) at
-#   byte offset 22, indicating an EFI_VARIABLE_AUTHENTICATION_2 auth file.
-#   Returns 1 for raw EFI Signature Lists (no auth header).
-# ---------------------------------------------------------------------------
-_pk_is_auth_file() {
-    local file="$1"
-    local fsize type_bytes
-    fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)
-    [[ "${fsize}" -ge 24 ]] || return 1
-    type_bytes=$(dd if="${file}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    [[ "${type_bytes}" == "f10e" ]]
-}
-
-# ---------------------------------------------------------------------------
 # _pk_wrap_esl <src_esl> <dst_auth>
 #   Prepend a 77-byte EFI_VARIABLE_AUTHENTICATION_2 header to the raw ESL
 #   <src_esl> and write the result to <dst_auth>.
@@ -297,7 +282,7 @@ stage_microsoft_pk() {
 
     if [[ ! -f "${PAYLOAD_DIR}/PK.auth" ]]; then
         local src="${MSFT_PAYLOADS_SUBDIR}/PK.auth"
-        if _pk_is_auth_file "${src}"; then
+        if efi_is_auth_file "${src}"; then
             cp "${src}" "${PAYLOAD_DIR}/PK.auth"
         else
             log_info "microsoft/PK.auth is a raw ESL (pre-Imaging build); wrapping with time-based auth header"
@@ -578,18 +563,7 @@ _dbx_esl_from_auth_or_raw() {
     local src="$1"
     local out="$2"
 
-    # File must be at least 24 bytes to contain the WIN_CERTIFICATE type field at offset 22.
-    # Shorter files cannot be auth files; fall through to the raw-ESL path.
-    local fsize
-    fsize=$(wc -c < "${src}" 2>/dev/null || echo 0)
-
-    # Detect EFI_VARIABLE_AUTHENTICATION_2: wCertificateType = 0x0EF1 at offset 22
-    local type_bytes=""
-    if [[ "${fsize}" -ge 24 ]]; then
-        type_bytes=$(dd if="${src}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    fi
-
-    if [[ "${type_bytes}" == "f10e" ]]; then
+    if efi_is_auth_file "${src}"; then
         # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset 16
         local len_bytes win_cert_len esl_offset
         len_bytes=$(dd if="${src}" bs=1 skip=16 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')

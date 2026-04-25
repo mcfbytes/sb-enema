@@ -465,3 +465,27 @@ efivar_get_secure_boot_state() {
         echo "0"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# efi_is_auth_file <file>
+#   Returns 0 if <file> is an EFI_VARIABLE_AUTHENTICATION_2 signed auth file;
+#   returns 1 if it is a raw EFI Signature List (no auth header).
+#
+#   Detection heuristic: the file must be at least 24 bytes and bytes at
+#   offset 22–23 must equal 0xF1 0x0E (WIN_CERT_TYPE_EFI_GUID = 0x0EF1,
+#   little-endian), which is the wCertificateType field of the embedded
+#   WIN_CERTIFICATE structure.
+#
+#   Too-small or unreadable files are treated as raw ESLs; callers (e.g.
+#   efi-updatevar) will report any real I/O error.  dd stderr is suppressed
+#   to avoid spurious log noise.
+# ---------------------------------------------------------------------------
+efi_is_auth_file() {
+    local file="$1"
+    local fsize
+    fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)
+    [[ "${fsize}" -ge 24 ]] || return 1
+    local type_bytes
+    type_bytes=$(dd if="${file}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    [[ "${type_bytes}" == "f10e" ]]
+}
