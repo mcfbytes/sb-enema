@@ -204,7 +204,7 @@ _enroll_var() {
 #   Returns the underlying safety_preflight exit code.
 # ---------------------------------------------------------------------------
 enroll_preflight() {
-    safety_preflight "generic"
+    safety_preflight "generic" || return $?
 }
 
 # ---------------------------------------------------------------------------
