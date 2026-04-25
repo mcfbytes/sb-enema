@@ -39,17 +39,14 @@ export CERTDB_DIR="${SB_ENEMA_LIB_DIR}/known-certs"
 # ---------------------------------------------------------------------------
 MOCK_EFIVARS="$(mktemp -d)"
 MOCK_DATA="$(mktemp -d)"
-MOCK_PAYLOADS="$(mktemp -d)"
-MOCK_KEYS="$(mktemp -d)"
 MOCK_DB_WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}" "${MOCK_DB_WORKDIR}"' EXIT
+trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_DB_WORKDIR}"' EXIT
 
 export EFIVARS_DIR="${MOCK_EFIVARS}"
 export DATA_MOUNT="${MOCK_DATA}"
-export KEYS_DIR="${MOCK_KEYS}"
-# update.sh defines PAYLOAD_DIR at source time; pre-export so all sourced
-# libraries (including stage.sh) see the mock location.
-export PAYLOAD_DIR="${MOCK_PAYLOADS}"
+# keygen.sh and update.sh derive KEYS_DIR and PAYLOAD_DIR from DATA_MOUNT at
+# source time, so isolation comes from DATA_MOUNT alone — do not pre-export
+# KEYS_DIR or PAYLOAD_DIR (they would be unconditionally overwritten).
 
 PASS_COUNT=0
 FAIL_COUNT=0
