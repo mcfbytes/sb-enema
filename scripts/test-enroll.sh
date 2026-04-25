@@ -369,7 +369,7 @@ else
     fail "_enroll_var incorrectly added variable to enrolled array when Setup Mode recheck failed: '${enrolled[*]:-}'"
 fi
 
-if echo "${output}" | grep -qi "setup mode"; then
+if echo "${output}" | grep -qi "how to enter setup mode"; then
     pass "_enroll_var surfaced guided Setup Mode message on recheck failure"
 else
     fail "_enroll_var did not surface guided Setup Mode message; got: '${output}'"
