@@ -18,14 +18,14 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/efivar.sh"
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/certdb.sh"
 
 # ---------------------------------------------------------------------------
-# safety_check_setup_mode()
-#   Hard block: refuse any write operation if:
-#     1. The system is NOT in Setup Mode, OR
-#     2. The current PK already matches the PK on the exFAT volume.
-#   Prints guidance on how to enter Setup Mode.
-#   Returns 0 if safe to proceed, 1 if blocked.
+# safety_assert_setup_mode()
+#   Verify the system is currently in UEFI Setup Mode.  On failure, prints
+#   the same guided message used by safety_check_setup_mode so callers that
+#   re-check Setup Mode mid-operation (e.g. between per-variable writes in
+#   enroll_apply) can surface actionable guidance.
+#   Returns 0 if in Setup Mode, 1 otherwise.
 # ---------------------------------------------------------------------------
-safety_check_setup_mode() {
+safety_assert_setup_mode() {
     local setup_mode
     setup_mode=$(efivar_get_setup_mode)
 
@@ -47,6 +47,19 @@ safety_check_setup_mode() {
         echo
         return 1
     fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# safety_check_setup_mode()
+#   Hard block: refuse any write operation if:
+#     1. The system is NOT in Setup Mode, OR
+#     2. The current PK already matches the PK on the exFAT volume.
+#   Prints guidance on how to enter Setup Mode.
+#   Returns 0 if safe to proceed, 1 if blocked.
+# ---------------------------------------------------------------------------
+safety_check_setup_mode() {
+    safety_assert_setup_mode || return 1
 
     # Check if PK already matches the user-owned certificate on the USB drive.
     if ! efivar_is_empty PK; then
