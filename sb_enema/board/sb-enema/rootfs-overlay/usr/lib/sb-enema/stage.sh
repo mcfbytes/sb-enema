@@ -760,6 +760,7 @@ stage_user_pk_kek() {
     done
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     mkdir -p "${PAYLOAD_DIR}/PK" "${PAYLOAD_DIR}/KEK" "${PAYLOAD_DIR}/dbx"
 
@@ -829,6 +830,7 @@ stage_user_kek_db() {
     done
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     mkdir -p "${PAYLOAD_DIR}/KEK" "${PAYLOAD_DIR}/db"
 
@@ -913,6 +915,7 @@ stage_sign_db() {
     fi
 
     OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
 
     local workdir
     workdir=$(mktemp -d) || die "Failed to create temp directory"
@@ -954,6 +957,7 @@ stage_sign_kek() {
     # clobber any RETURN trap set by a calling function.
     (
         OWNER_GUID=$(keygen_load_or_generate_guid)
+        keygen_assert_valid_guid "${OWNER_GUID}"
 
         local workdir
         workdir=$(mktemp -d) || die "Failed to create temp directory"

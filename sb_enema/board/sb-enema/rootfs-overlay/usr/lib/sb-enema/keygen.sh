@@ -59,6 +59,20 @@ keygen_load_or_generate_guid() {
 }
 
 # ---------------------------------------------------------------------------
+# keygen_assert_valid_guid <guid>
+#   Validate that <guid> matches the canonical 8-4-4-4-12 hex UUID format.
+#   Calls die() with a clear message on mismatch.  Intended as a
+#   defence-in-depth check at every site that consumes OWNER_GUID before
+#   handing it to cert-to-efi-sig-list / sign-efi-sig-list, which would
+#   otherwise produce malformed ESLs or fail with opaque errors.
+# ---------------------------------------------------------------------------
+keygen_assert_valid_guid() {
+    local guid="$1"
+    [[ "${guid}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+        || die "Owner GUID '${guid}' is not a valid UUID (expected 8-4-4-4-12 hex format)"
+}
+
+# ---------------------------------------------------------------------------
 # _keygen_sanitize_dn_field <string>
 #   Sanitize a string for use in an X.509 Distinguished Name field.
 # ---------------------------------------------------------------------------
