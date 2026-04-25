@@ -190,6 +190,65 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 4: efivar_cert_cache_clear rejects non-/tmp paths
+# ---------------------------------------------------------------------------
+echo "--- Test 4: efivar_cert_cache_clear rejects unsafe cache path ---"
+
+# Create a real directory outside /tmp (under REPO_ROOT) so we can verify
+# it was NOT deleted when the guard fires.
+_unsafe_dir="${REPO_ROOT}/.test-unsafe-cache-$$"
+mkdir -p "${_unsafe_dir}"
+_EFIVAR_CERT_CACHE_DIR="${_unsafe_dir}"
+rc=0
+(efivar_cert_cache_clear 2>/dev/null) || rc=$?
+if [[ "${rc}" -ne 0 ]] && [[ -d "${_unsafe_dir}" ]]; then
+    pass "efivar_cert_cache_clear refused unsafe path and directory was not deleted"
+elif [[ "${rc}" -eq 0 ]]; then
+    fail "efivar_cert_cache_clear should have rejected non-/tmp path but did not"
+else
+    fail "efivar_cert_cache_clear rejected path but directory was unexpectedly removed"
+fi
+rm -rf "${_unsafe_dir}"
+# Restore the global to empty so subsequent code is unaffected.
+_EFIVAR_CERT_CACHE_DIR=""
+
+# Also verify that a path-traversal string (e.g. /tmp/../<repo_root>) is
+# rejected after canonicalization resolves it out of /tmp.
+_traversal_dir="${REPO_ROOT}/.test-traversal-cache-$$"
+mkdir -p "${_traversal_dir}"
+# Build a traversal path: /tmp/../<absolute non-tmp dir> (double-slash is fine;
+# readlink -f resolves it to the real path which must not start with /tmp/).
+_traversal_path="/tmp/../${_traversal_dir}"
+_EFIVAR_CERT_CACHE_DIR="${_traversal_path}"
+rc=0
+(efivar_cert_cache_clear 2>/dev/null) || rc=$?
+if [[ "${rc}" -ne 0 ]] && [[ -d "${_traversal_dir}" ]]; then
+    pass "efivar_cert_cache_clear rejected path-traversal string and directory was not deleted"
+elif [[ "${rc}" -eq 0 ]]; then
+    fail "efivar_cert_cache_clear should have rejected traversal path but did not"
+else
+    fail "efivar_cert_cache_clear rejected traversal path but directory was unexpectedly removed"
+fi
+rm -rf "${_traversal_dir}"
+_EFIVAR_CERT_CACHE_DIR=""
+
+# Confirm that a legitimate /tmp/... path is accepted without error.
+# Force mktemp to create under /tmp regardless of $TMPDIR.
+_safe_cache_dir=$(mktemp -d -p /tmp)
+_EFIVAR_CERT_CACHE_DIR="${_safe_cache_dir}"
+rc=0
+efivar_cert_cache_clear 2>/dev/null || rc=$?
+if [[ "${rc}" -eq 0 ]] && [[ ! -d "${_safe_cache_dir}" ]]; then
+    pass "efivar_cert_cache_clear accepted and removed safe /tmp path"
+elif [[ "${rc}" -ne 0 ]]; then
+    fail "efivar_cert_cache_clear unexpectedly rejected a safe /tmp path (exit ${rc})"
+    rm -rf "${_safe_cache_dir}"
+else
+    fail "efivar_cert_cache_clear accepted safe /tmp path but directory was not removed"
+    rm -rf "${_safe_cache_dir}"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

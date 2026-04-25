@@ -165,8 +165,7 @@ report_header() {
             local fp
             fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
                     -fingerprint -sha256 2>/dev/null \
-                    | sed 's/.*Fingerprint=//;s/://g' \
-                    | tr '[:upper:]' '[:lower:]') || fp=""
+                    | _fp_normalize) || fp=""
             if [[ -n "${fp}" ]]; then
                 ownership=$(certdb_identify_ownership_model "${fp}")
             fi
@@ -259,8 +258,7 @@ report_variable_summary() {
                 | sed 's/^notAfter=//') || not_after="(unknown)"
             fp=$(openssl x509 -in "${der_file}" -inform DER -noout \
                     -fingerprint -sha256 2>/dev/null \
-                    | sed 's/.*Fingerprint=//;s/://g' \
-                    | tr '[:upper:]' '[:lower:]') || fp="(unknown)"
+                    | _fp_normalize) || fp="(unknown)"
             known_desc=$(certdb_lookup "${fp}") || known_desc=""
             icon=$(_report_cert_icon "${der_file}")
 

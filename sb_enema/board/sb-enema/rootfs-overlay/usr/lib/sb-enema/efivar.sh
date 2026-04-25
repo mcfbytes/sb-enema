@@ -131,7 +131,14 @@ efivar_cert_cache_init() {
 #   Release the cert extraction cache.
 efivar_cert_cache_clear() {
     if [[ -n "${_EFIVAR_CERT_CACHE_DIR}" ]]; then
-        rm -rf "${_EFIVAR_CERT_CACHE_DIR}"
+        # Canonicalize first so path-traversal strings like /tmp/../etc are
+        # resolved before the prefix check (guards against bypass via '..').
+        local _canonical
+        _canonical=$(readlink -f "${_EFIVAR_CERT_CACHE_DIR}" 2>/dev/null) \
+            || die "Refusing to rm -rf: cannot canonicalize cache path: ${_EFIVAR_CERT_CACHE_DIR}"
+        [[ "${_canonical}" == /tmp/* ]] \
+            || die "Refusing to rm -rf unsafe cache path: ${_EFIVAR_CERT_CACHE_DIR}"
+        rm -rf "${_canonical}"
         _EFIVAR_CERT_CACHE_DIR=""
     fi
 }
@@ -223,27 +230,19 @@ efivar_extract_certs() {
         local offset=0
         local cert_index=0
 
-        # Walk each EFI_SIGNATURE_LIST entry.
-        # EFI_SIGNATURE_LIST layout (all uint32 fields are little-endian):
-        #   offset  0: SignatureType GUID (16 bytes)
-        #   offset 16: SignatureListSize  (uint32)
-        #   offset 20: SignatureHeaderSize (uint32)
-        #   offset 24: SignatureSize       (uint32)
-        #   offset 28: SignatureHeader     (SignatureHeaderSize bytes, usually 0)
-        #   offset 28+SHS: N * SignatureSize bytes of EFI_SIGNATURE_DATA entries
-        # Each EFI_SIGNATURE_DATA entry:
-        #   offset  0: SignatureOwner GUID (16 bytes)
-        #   offset 16: SignatureData       (SignatureSize - 16 bytes; DER cert for X509)
-        while [[ $((offset + 28)) -le ${file_size} ]]; do
+        # Walk each EFI_SIGNATURE_LIST entry.  See common.sh for the named
+        # offset/size constants (EFI_SIGLIST_*, EFI_SIGNATURE_LIST_HEADER_SIZE,
+        # EFI_SIGNATURE_OWNER_GUID_SIZE) and the UEFI §32.4.1 layout reference.
+        while [[ $((offset + EFI_SIGNATURE_LIST_HEADER_SIZE)) -le ${file_size} ]]; do
             # Read the SignatureType GUID (16 bytes) as a hex string.
             local guid_hex
             guid_hex=$(dd if="${esl_file}" bs=1 skip="${offset}" count=16 2>/dev/null \
                 | od -An -tx1 | tr -d ' \n')
 
             local list_size hdr_size sig_size
-            list_size=$(_efivar_read_u32_le "${esl_file}" $((offset + 16))) || break
-            hdr_size=$(_efivar_read_u32_le  "${esl_file}" $((offset + 20))) || break
-            sig_size=$(_efivar_read_u32_le  "${esl_file}" $((offset + 24))) || break
+            list_size=$(_efivar_read_u32_le "${esl_file}" $((offset + EFI_SIGLIST_LIST_SIZE_OFFSET))) || break
+            hdr_size=$(_efivar_read_u32_le  "${esl_file}" $((offset + EFI_SIGLIST_HDR_SIZE_OFFSET)))  || break
+            sig_size=$(_efivar_read_u32_le  "${esl_file}" $((offset + EFI_SIGLIST_SIG_SIZE_OFFSET)))  || break
 
             log_info "ESL entry at offset ${offset}: type=${guid_hex} list_size=${list_size} sig_size=${sig_size}"
 
@@ -252,10 +251,10 @@ efivar_extract_certs() {
                 break
             fi
 
-            # Validate that list_size covers at least the 28-byte fixed header
+            # Validate that list_size covers at least the fixed ESL header
             # and that the entry fits within the file, to handle corrupt payloads.
-            if [[ "${list_size}" -lt 28 ]]; then
-                log_warn "EFI_SIGNATURE_LIST at offset ${offset} has list_size=${list_size} < 28; stopping parse"
+            if [[ "${list_size}" -lt ${EFI_SIGNATURE_LIST_HEADER_SIZE} ]]; then
+                log_warn "EFI_SIGNATURE_LIST at offset ${offset} has list_size=${list_size} < ${EFI_SIGNATURE_LIST_HEADER_SIZE}; stopping parse"
                 break
             fi
             if [[ $((offset + list_size)) -gt ${file_size} ]]; then
@@ -263,18 +262,18 @@ efivar_extract_certs() {
                 break
             fi
 
-            if [[ "${guid_hex}" == "${X509_GUID_HEX}" ]] && [[ "${sig_size}" -gt 16 ]]; then
-                # Signature data section starts after fixed 28-byte header + optional header.
-                local data_start=$((offset + 28 + hdr_size))
-                local data_len=$((list_size - 28 - hdr_size))
+            if [[ "${guid_hex}" == "${X509_GUID_HEX}" ]] && [[ "${sig_size}" -gt ${EFI_SIGNATURE_OWNER_GUID_SIZE} ]]; then
+                # Signature data section starts after fixed ESL header + optional header.
+                local data_start=$((offset + EFI_SIGNATURE_LIST_HEADER_SIZE + hdr_size))
+                local data_len=$((list_size - EFI_SIGNATURE_LIST_HEADER_SIZE - hdr_size))
 
                 if [[ "${data_len}" -gt 0 ]] && [[ "${sig_size}" -gt 0 ]]; then
                     local num_entries=$(( data_len / sig_size ))
                     local i=0
                     while [[ $i -lt $num_entries ]]; do
-                        # DER cert starts after the 16-byte SignatureOwner GUID.
-                        local der_offset=$(( data_start + i * sig_size + 16 ))
-                        local der_size=$(( sig_size - 16 ))
+                        # DER cert starts after the SignatureOwner GUID prefix.
+                        local der_offset=$(( data_start + i * sig_size + EFI_SIGNATURE_OWNER_GUID_SIZE ))
+                        local der_size=$(( sig_size - EFI_SIGNATURE_OWNER_GUID_SIZE ))
                         local der_file="${output_dir}/${varname}-${cert_index}.der"
 
                         log_info "Extracting X509 cert ${cert_index} from ${varname}: offset=${der_offset}, size=${der_size} bytes"
@@ -290,6 +289,10 @@ efivar_extract_certs() {
                         fi
                         i=$(( i + 1 ))
                     done
+                    local remainder=$(( data_len % sig_size ))
+                    if [[ "${remainder}" -ne 0 ]]; then
+                        log_warn "EFI_SIGNATURE_LIST at offset ${offset} (${varname}): data_len=${data_len} is not a multiple of sig_size=${sig_size}; ${remainder} trailing byte(s) ignored"
+                    fi
                 fi
             fi
 
@@ -336,7 +339,7 @@ _efivar_cert_summary() {
     not_after=$(openssl x509 -in "${der_file}" -inform DER -noout -enddate 2>/dev/null \
         | sed 's/^notAfter=//') || not_after="(unknown)"
     fingerprint=$(openssl x509 -in "${der_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-        | sed 's/^.*Fingerprint=//') || fingerprint="(unknown)"
+        | _fp_normalize) || fingerprint="(unknown)"
 
     echo "Subject:     ${subject}"
     echo "Issuer:      ${issuer}"
@@ -383,7 +386,7 @@ efivar_list_certs() {
             not_after=$(openssl x509 -in "${der_file}" -inform DER -noout -enddate 2>/dev/null \
                 | sed 's/^notAfter=//') || not_after="(unknown)"
             fingerprint=$(openssl x509 -in "${der_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/^.*Fingerprint=//') || fingerprint="(unknown)"
+                | _fp_normalize) || fingerprint="(unknown)"
 
             echo "[${index}] ${subject} | Issuer=${issuer} | Expires=${not_after} | SHA256=${fingerprint}"
             index=$((index + 1))
@@ -454,3 +457,4 @@ efivar_get_secure_boot_state() {
         echo "0"
     fi
 }
+
