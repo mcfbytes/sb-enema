@@ -197,18 +197,23 @@ _enroll_var() {
 }
 
 # ---------------------------------------------------------------------------
-# enroll() — Apply staged .auth payloads in correct order: db → dbx → KEK → PK
-#   Skips variables that have no staged .auth file.
-#   Calls safety_preflight, update_compute "generic", preview_display,
-#   preview_confirm, then efi-updatevar for each staged variable.
+# enroll_preflight() — Stage 1: safety + integrity checks.
+#   Thin wrapper around safety_preflight "generic" so callers (including
+#   the public enroll() orchestrator and any non-interactive driver) can
+#   invoke the preflight step in isolation.
+#   Returns the underlying safety_preflight exit code.
 # ---------------------------------------------------------------------------
-enroll() {
-    # Safety preflight
-    if ! safety_preflight "generic"; then
-        return 1
-    fi
+enroll_preflight() {
+    safety_preflight "generic"
+}
 
-    # Compute delta and show preview
+# ---------------------------------------------------------------------------
+# enroll_preview() — Stage 2: compute delta, display preview, confirm.
+#   Computes the generic update delta, renders the preview, logs it, and
+#   prompts the user for confirmation.  Returns 0 if the user confirms,
+#   1 if they decline.
+# ---------------------------------------------------------------------------
+enroll_preview() {
     update_compute "generic"
     preview_display
     preview_log
@@ -217,7 +222,19 @@ enroll() {
         log_info "User declined enrollment"
         return 1
     fi
+    return 0
+}
 
+# ---------------------------------------------------------------------------
+# enroll_apply() — Stage 3: per-variable writes + post-write verification.
+#   Applies staged .auth payloads in order db → dbx → KEK → PK (PK MUST be
+#   last because writing PK transitions from Setup Mode to User Mode).
+#   Skips variables that have no staged .auth file.  On success, signs
+#   BOOTX64.EFI when user keys are present.  Performs no preflight, preview,
+#   or confirmation -- callers wanting those steps should use enroll() or
+#   call the corresponding stage function first.
+# ---------------------------------------------------------------------------
+enroll_apply() {
     # Collect all staged cert fingerprints for post-write verification.
     # A payload ESL may contain only a subset of the staged certs (e.g. the
     # microsoft/ KEK ESL holds only the 2023 cert; the staged dir also has
@@ -267,4 +284,18 @@ enroll() {
         _keygen_sign_bootx64
         keygen_backup_instructions
     fi
+}
+
+# ---------------------------------------------------------------------------
+# enroll() — Apply staged .auth payloads in correct order: db → dbx → KEK → PK
+#   Thin orchestrator that runs the three enrollment stages in sequence:
+#     1. enroll_preflight  (safety + integrity checks)
+#     2. enroll_preview    (compute delta + display + confirm)
+#     3. enroll_apply      (per-variable writes + verification)
+#   Skips variables that have no staged .auth file.
+# ---------------------------------------------------------------------------
+enroll() {
+    enroll_preflight || return 1
+    enroll_preview   || return 1
+    enroll_apply     || return 1
 }
