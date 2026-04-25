@@ -131,7 +131,14 @@ efivar_cert_cache_init() {
 #   Release the cert extraction cache.
 efivar_cert_cache_clear() {
     if [[ -n "${_EFIVAR_CERT_CACHE_DIR}" ]]; then
-        rm -rf "${_EFIVAR_CERT_CACHE_DIR}"
+        # Canonicalize first so path-traversal strings like /tmp/../etc are
+        # resolved before the prefix check (guards against bypass via '..').
+        local _canonical
+        _canonical=$(readlink -f "${_EFIVAR_CERT_CACHE_DIR}" 2>/dev/null) \
+            || die "Refusing to rm -rf: cannot canonicalize cache path: ${_EFIVAR_CERT_CACHE_DIR}"
+        [[ "${_canonical}" == /tmp/* ]] \
+            || die "Refusing to rm -rf unsafe cache path: ${_EFIVAR_CERT_CACHE_DIR}"
+        rm -rf "${_canonical}"
         _EFIVAR_CERT_CACHE_DIR=""
     fi
 }
