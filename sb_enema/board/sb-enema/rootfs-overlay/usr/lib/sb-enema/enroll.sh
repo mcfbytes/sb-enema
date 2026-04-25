@@ -131,6 +131,20 @@ _enroll_var() {
 
     log_info "Enrolling ${var_label}"
 
+    # Re-verify Setup Mode immediately before each write.  safety_preflight
+    # is run once before the per-variable write loop, but firmware bugs or
+    # unexpected power events can cause the system to leave Setup Mode
+    # between writes -- if that happens, efi-updatevar will fail on KEK or
+    # PK with a cryptic error and Secure Boot is left partially enrolled.
+    # Re-checking here surfaces actionable guidance instead of a raw failure.
+    if ! safety_assert_setup_mode; then
+        log_action "ENROLL" "${varname}" "FAIL" "system left Setup Mode before write"
+        log_error "System is no longer in Setup Mode; refusing to write ${varname}"
+        local enrolled_str="${_enrolled_ref[*]:-}"
+        _enroll_report_partial_failure "${varname}" "${enrolled_str:-(none)}"
+        return 1
+    fi
+
     # Use -f for signed EFI_VARIABLE_AUTHENTICATION_2 auth files:
     #   • microsoft/PK.auth (from Imaging/PK.bin — pre-signed MS auth)
     #   • user-signed payloads from stage_sign_db(), stage_user_pk_kek(), etc.

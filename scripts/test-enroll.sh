@@ -81,6 +81,13 @@ dd if=/dev/zero bs=1 count=32 2>/dev/null > "${DUMMY_AUTH}"
 # Stub safety_verify_write to always succeed (not the focus of these tests)
 safety_verify_write() { return 0; }
 
+# Stub safety_assert_setup_mode to succeed by default (focus of dedicated test).
+# _enroll_var() re-checks Setup Mode before each write to catch firmware bugs
+# or power events that may exit Setup Mode mid-enrollment.  Tests that focus on
+# other behaviour assume this check passes; the dedicated regression test
+# below overrides this stub to simulate the failure path.
+safety_assert_setup_mode() { return 0; }
+
 # ---------------------------------------------------------------------------
 # Test 1: efi-updatevar succeeds (exit 0)
 # ---------------------------------------------------------------------------
@@ -316,6 +323,66 @@ fi
 
 # Restore stub for any subsequent tests.
 safety_verify_write() { return 0; }
+
+# ---------------------------------------------------------------------------
+# Test 7: Setup Mode exits between writes — _enroll_var must abort with the
+#   guided "not in Setup Mode" message and NOT call efi-updatevar.
+#   Regression test for the issue: enroll() previously only checked Setup
+#   Mode once before the loop, so a firmware bug or power event that exited
+#   Setup Mode between writes produced a cryptic efi-updatevar error.  Now
+#   _enroll_var() re-checks Setup Mode before every write.
+# ---------------------------------------------------------------------------
+echo "--- Test 7: Setup Mode exits between writes (re-check before each write) ---"
+
+: > "${AUDIT_LOG_FILE}"
+
+# Simulate firmware exiting Setup Mode between writes.
+safety_assert_setup_mode() {
+    log_error "SAFETY BLOCK: System is NOT in UEFI Setup Mode."
+    echo "  How to enter Setup Mode:"
+    return 1
+}
+
+# efi-updatevar must NOT be reached if the recheck blocks the write.
+_efi_updatevar_calls=0
+efi-updatevar() { _efi_updatevar_calls=$((_efi_updatevar_calls + 1)); return 0; }
+export -f efi-updatevar
+
+enrolled=()
+output=$(_enroll_var "KEK" "${DUMMY_AUTH}" enrolled 2>&1) && rc=0 || rc=$?
+
+if [[ "${rc}" -ne 0 ]]; then
+    pass "_enroll_var returns non-zero when Setup Mode check fails before write"
+else
+    fail "_enroll_var unexpectedly returned 0 when Setup Mode check failed"
+fi
+
+if [[ "${_efi_updatevar_calls}" -eq 0 ]]; then
+    pass "_enroll_var did not invoke efi-updatevar after Setup Mode recheck failed"
+else
+    fail "_enroll_var called efi-updatevar ${_efi_updatevar_calls} time(s) after Setup Mode recheck failed"
+fi
+
+if [[ "${enrolled[*]:-}" == "" ]]; then
+    pass "_enroll_var did not add variable to enrolled array when Setup Mode recheck failed"
+else
+    fail "_enroll_var incorrectly added variable to enrolled array when Setup Mode recheck failed: '${enrolled[*]:-}'"
+fi
+
+if echo "${output}" | grep -qi "setup mode"; then
+    pass "_enroll_var surfaced guided Setup Mode message on recheck failure"
+else
+    fail "_enroll_var did not surface guided Setup Mode message; got: '${output}'"
+fi
+
+if grep -q '|ENROLL|KEK|FAIL|system left Setup Mode' "${AUDIT_LOG_FILE}"; then
+    pass "audit log records ENROLL FAIL with 'system left Setup Mode' detail"
+else
+    fail "audit log missing ENROLL FAIL entry for Setup Mode recheck failure"
+fi
+
+# Restore stub for any subsequent tests.
+safety_assert_setup_mode() { return 0; }
 
 # ---------------------------------------------------------------------------
 # Summary
