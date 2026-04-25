@@ -49,12 +49,36 @@ readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8
 KEK_UPDATE_MAP="${DATA_MOUNT}/sb-enema/kek_update_map.json"
 
 # ---------------------------------------------------------------------------
+# _stage_assert_payload_dir_safe()
+#   Validate that PAYLOAD_DIR is safe to pass to rm -rf:
+#     1. Non-empty string.
+#     2. Absolute path (starts with /).
+#     3. Begins with an expected prefix (/mnt/ or /tmp/).
+#   Calls die() on any violation so the caller never reaches rm -rf.
+# ---------------------------------------------------------------------------
+_stage_assert_payload_dir_safe() {
+    if [[ -z "${PAYLOAD_DIR:-}" ]]; then
+        die "PAYLOAD_DIR is empty; refusing to run rm -rf on an unsafe path"
+    fi
+
+    if [[ "${PAYLOAD_DIR}" != /* ]]; then
+        die "PAYLOAD_DIR ('${PAYLOAD_DIR}') is not an absolute path; refusing to run rm -rf"
+    fi
+
+    if [[ "${PAYLOAD_DIR}" != /mnt/* && "${PAYLOAD_DIR}" != /tmp/* ]]; then
+        die "PAYLOAD_DIR ('${PAYLOAD_DIR}') does not start with an expected prefix (/mnt/ or /tmp/); refusing to run rm -rf"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # stage_clear()
 #   Remove all staged content from PAYLOAD_DIR except the microsoft/
 #   subdirectory (which contains read-only pre-built payloads).
 # ---------------------------------------------------------------------------
 stage_clear() {
     log_info "Clearing staging area (preserving microsoft/ subdirectory)"
+
+    _stage_assert_payload_dir_safe
 
     if [[ ! -d "${PAYLOAD_DIR}" ]]; then
         mkdir -p "${PAYLOAD_DIR}"
