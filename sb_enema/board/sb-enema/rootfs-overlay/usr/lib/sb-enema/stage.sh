@@ -234,9 +234,78 @@ stage_show_delta() {
 _pk_wrap_esl() {
     local src="$1"
     local dst="$2"
-    # shellcheck disable=SC2059
-    if ! printf '\xda\x07\x03\x06\x13\x11\x15\x00\x00\x00\x00\x00\xff\x07\x00\x00\x3d\x00\x00\x00\x00\x02\xf1\x0e\x9d\xd2\xaf\x4a\xdf\x68\xee\x49\x8a\xa9\x34\x7d\x37\x56\x65\xa7\x30\x23\x02\x01\x01\x31\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x30\x0b\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x07\x01\x31\x00' > "${dst}" || \
-       ! cat "${src}" >> "${dst}"; then
+
+    # The 77-byte EFI_VARIABLE_AUTHENTICATION_2 header is assembled from
+    # labeled hex segments below.  Each segment maps directly to a field of
+    # the UEFI structure; sizes are noted in the comments.  Total = 77 bytes.
+
+    # EFI_TIME (UEFI §8.3) — 16 bytes, fixed timestamp 2010-03-06T19:17:21Z
+    # with TimeZone=0x07FF (unspecified) and zeroed Pad1/Nanosecond/Daylight/Pad2.
+    # Bytes: Year(2) Month Day Hour Min Sec Pad1 Nano(4) TZ(2) DST Pad2
+    local efi_time_hex='da0703061311150000000000ff070000'
+
+    # WIN_CERTIFICATE_UEFI_GUID (UEFI §32.4.1) — 24 bytes.
+    #   dwLength             = computed below from segment sizes
+    #                          (= EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE +
+    #                             sizeof(pkcs7_empty_hex))
+    #   wRevision            = 0x0200 (EFI_WIN_CERT_REVISION_LE_HEX)
+    #   wCertificateType     = 0x0EF1 = WIN_CERT_TYPE_EFI_GUID
+    #                          (EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX)
+    #   CertType GUID        = EFI_CERT_TYPE_PKCS7_GUID
+    #                          (EFI_CERT_TYPE_PKCS7_GUID_LE_HEX)
+    # PKCS#7-style empty SignedData CertData — 37 bytes, the minimum
+    # DER-encoded "empty" SignedData accepted as the AuthInfo.CertData.
+    # This is what the Microsoft secureboot_objects build emits in
+    # Imaging/PK.bin and what the firmware unconditionally accepts in
+    # Setup Mode (UEFI §32.3.2: when PK is NULL, any valid
+    # EFI_VARIABLE_AUTHENTICATION_2 is accepted).
+    #
+    # DER decode (37 bytes total):
+    #   30 23                 SEQUENCE, length 35  (SignedData)
+    #     02 01 01            INTEGER 1            (CMSVersion)
+    #     31 0f               SET, length 15       (DigestAlgorithmIdentifiers)
+    #       30 0d 06 09 60 86 48 01 65 03 04 02 01 05 00
+    #                         AlgorithmIdentifier { id-sha256, NULL }
+    #     30 0b               SEQUENCE, length 11  (EncapContentInfo)
+    #       06 09 2a 86 48 86 f7 0d 01 07 01
+    #                         OID 1.2.840.113549.1.7.1 (id-data)
+    #     31 00               SET, length 0        (SignerInfos = empty)
+    local pkcs7_empty_hex='3023020101310f300d06096086480165030402010500300b06092a864886f70d0107013100'
+
+    # Compute dwLength from segment sizes so the WIN_CERTIFICATE header
+    # cannot silently desync from its CertData payload if the latter is
+    # ever edited.  Format as 4-byte little-endian hex.
+    local pkcs7_size=$(( ${#pkcs7_empty_hex} / 2 ))
+    local wincert_dwlen=$(( EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE + pkcs7_size ))
+    local wincert_dwlen_hex
+    wincert_dwlen_hex=$(printf '%02x%02x%02x%02x' \
+        $((  wincert_dwlen        & 0xff )) \
+        $(( (wincert_dwlen >>  8) & 0xff )) \
+        $(( (wincert_dwlen >> 16) & 0xff )) \
+        $(( (wincert_dwlen >> 24) & 0xff )))
+    local wincert_hdr_hex="${wincert_dwlen_hex}${EFI_WIN_CERT_REVISION_LE_HEX}${EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX}${EFI_CERT_TYPE_PKCS7_GUID_LE_HEX}"
+
+    # Convert the concatenated hex string into a printf escape sequence
+    # ("\xNN\xNN..."), then emit raw bytes via printf %b.  Avoids depending
+    # on xxd, which is not enabled in the busybox build.
+    local hex_all="${efi_time_hex}${wincert_hdr_hex}${pkcs7_empty_hex}"
+
+    # Assertion: the assembled header must be exactly
+    # EFI_AUTH2_FIXED_HEADER_SIZE (= EFI_TIME + WIN_CERTIFICATE header)
+    # + CertData.  This catches any future edit that desyncs the segments.
+    local expected_total=$(( EFI_AUTH2_FIXED_HEADER_SIZE + pkcs7_size ))
+    local actual_total=$(( ${#hex_all} / 2 ))
+    if (( actual_total != expected_total )); then
+        die "_pk_wrap_esl: internal error: assembled header is ${actual_total} bytes; expected ${expected_total}"
+    fi
+
+    local i escapes=""
+    for (( i = 0; i < ${#hex_all}; i += 2 )); do
+        escapes+="\\x${hex_all:i:2}"
+    done
+
+    if ! printf '%b' "${escapes}" > "${dst}" \
+       || ! cat "${src}" >> "${dst}"; then
         rm -f "${dst}"
         die "_pk_wrap_esl: failed to write auth-wrapped PK payload to ${dst}"
     fi
@@ -563,12 +632,15 @@ _dbx_esl_from_auth_or_raw() {
     local out="$2"
 
     if efivar_is_auth_file "${src}"; then
-        # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset 16
+        # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset
+        # EFI_AUTH2_WINCERT_LEN_OFFSET (=16), then strip the
+        # EFI_TIME + WIN_CERTIFICATE_UEFI_GUID prefix to expose the raw ESL.
         local len_bytes win_cert_len esl_offset
-        len_bytes=$(dd if="${src}" bs=1 skip=16 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+        len_bytes=$(dd if="${src}" bs=1 skip="${EFI_AUTH2_WINCERT_LEN_OFFSET}" count=4 2>/dev/null \
+                      | od -An -tx1 | tr -d ' \n')
         win_cert_len=$(( 16#${len_bytes:6:2} * 16777216 + 16#${len_bytes:4:2} * 65536 + \
                          16#${len_bytes:2:2} * 256 + 16#${len_bytes:0:2} ))
-        esl_offset=$(( 16 + win_cert_len ))
+        esl_offset=$(( EFI_AUTH2_WINCERT_LEN_OFFSET + win_cert_len ))
         tail -c "+$((esl_offset + 1))" "${src}" > "${out}"  # tail -c +N is 1-indexed
         log_info "Stripped EFI_VARIABLE_AUTHENTICATION_2 header from $(basename "${src}") (ESL at offset ${esl_offset})"
     else
