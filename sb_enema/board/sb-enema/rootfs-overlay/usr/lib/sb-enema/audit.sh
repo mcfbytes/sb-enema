@@ -40,18 +40,10 @@ _AUDIT_DB_HAS_2023=""
 _AUDIT_DBX_CURRENT=""
 
 # ---------------------------------------------------------------------------
-# Known Microsoft certificate fingerprints (lowercase hex, no colons).
-# These are used to distinguish between legacy (2011) and current (2023)
-# certificates in the KEK and db databases.
-# ---------------------------------------------------------------------------
-readonly _AUDIT_MS_KEK_2011="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
-readonly _AUDIT_MS_KEK_2023="3cd3f0309edae228767a976dd40d9f4affc4fbd5218f2e8cc3c9dd97e8ac6f9d"
-
-readonly _AUDIT_MS_WIN_PCA_2011="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
-readonly _AUDIT_MS_UEFI_CA_2023="f6124e34125bee3fe6d79a574eaa7b91c0e7bd9d929c1a321178efd611dad901"
-readonly _AUDIT_MS_WIN_UEFI_CA_2023="076f1fea90ac29155ebf77c17682f75f1fdd1be196da302dc8461e350a9ae330"
-
 # Minimum number of SHA-256 hashes expected in a reasonably current dbx.
+# (Microsoft cert fingerprint constants — SB_MS_*_FP — are defined in
+# common.sh as the single source of truth.)
+# ---------------------------------------------------------------------------
 readonly _AUDIT_DBX_MIN_HASHES=100
 
 # ---------------------------------------------------------------------------
@@ -232,9 +224,9 @@ audit_kek() {
         local fp
         fp=$(_audit_cert_fingerprint "${der_file}")
 
-        if [[ "${fp}" == "${_AUDIT_MS_KEK_2023}" ]]; then
+        if [[ "${fp}" == "${SB_MS_KEK_CA_2023_FP}" ]]; then
             has_ms_kek_2023="yes"
-        elif [[ "${fp}" == "${_AUDIT_MS_KEK_2011}" ]]; then
+        elif [[ "${fp}" == "${SB_MS_KEK_CA_2011_FP}" ]]; then
             has_ms_kek_2011="yes"
         elif ! certdb_is_microsoft_kek "${fp}"; then
             # Check if this is the user's own KEK (custom-owner mode)
@@ -304,16 +296,16 @@ audit_db() {
         fp=$(_audit_cert_fingerprint "${der_file}")
 
         # Track specific certificates
-        if [[ "${fp}" == "${_AUDIT_MS_WIN_PCA_2011}" ]]; then
+        if [[ "${fp}" == "${SB_MS_WIN_PCA_2011_FP}" ]]; then
             has_win_pca_2011="yes"
         fi
-        if [[ "${fp}" == "${_AUDIT_MS_UEFI_CA_2023}" ]] || \
-           [[ "${fp}" == "${_AUDIT_MS_WIN_UEFI_CA_2023}" ]]; then
+        if [[ "${fp}" == "${SB_MS_UEFI_CA_2023_FP}" ]] || \
+           [[ "${fp}" == "${SB_MS_WIN_UEFI_CA_2023_FP}" ]]; then
             has_any_2023="yes"
             has_only_legacy="no"
         fi
         # Any non-legacy Microsoft cert means not "only legacy"
-        if certdb_is_microsoft_db "${fp}" && [[ "${fp}" != "${_AUDIT_MS_WIN_PCA_2011}" ]]; then
+        if certdb_is_microsoft_db "${fp}" && [[ "${fp}" != "${SB_MS_WIN_PCA_2011_FP}" ]]; then
             local known_db_desc
             known_db_desc=$(certdb_lookup "${fp}")
             if [[ "${known_db_desc}" == *"2023"* ]]; then
@@ -396,9 +388,28 @@ audit_dbx() {
 # audit_bootloader_chain_ca() — Check EFI bootloader signing CA.
 #   Calls the bootloader scanner to determine whether PCA 2011 is still in
 #   use, and records the result as an audit finding.
+#
+#   If the runtime prerequisites for the scan are not present on this image
+#   (lsblk, plus at least one of osslsigncode / sbverify), records an INFO
+#   finding noting that the scan is unavailable rather than emitting a
+#   WARNING that has no actionable remediation.
 # ---------------------------------------------------------------------------
 audit_bootloader_chain_ca() {
     local component="bootloader"
+
+    # Prerequisite check: the scanner needs lsblk to enumerate ESPs and at
+    # least one of osslsigncode or sbverify to extract Authenticode chains.
+    local missing=()
+    command -v lsblk        >/dev/null 2>&1 || missing+=("lsblk")
+    if ! command -v osslsigncode >/dev/null 2>&1 \
+       && ! command -v sbverify    >/dev/null 2>&1; then
+        missing+=("osslsigncode-or-sbverify")
+    fi
+    if (( ${#missing[@]} > 0 )); then
+        _audit_add_finding "INFO" "${component}" \
+            "Bootloader CA scan unavailable on this image (missing: ${missing[*]})"
+        return 0
+    fi
 
     # Guard is handled by _SB_ENEMA_BOOTLOADER_SCAN_SH; source already done.
     bootloader_scan_pca2011_in_use || true
@@ -406,7 +417,7 @@ audit_bootloader_chain_ca() {
     case "${BSCAN_VERDICT:-}" in
         CLEAR)
             _audit_add_finding "INFO" "${component}" \
-                "All detected bootloaders signed by post-2023 Microsoft CA — DBX2024 safe to apply"
+                "No PCA 2011 signers detected in scanned EFI binaries — DBX2024 safe to apply"
             ;;
         PCA2011_IN_USE)
             _audit_add_finding "HIGH" "${component}" \

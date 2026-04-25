@@ -2,7 +2,6 @@
 # bootloader-scan.sh — Scan EFI bootloader chains to determine whether
 # Microsoft Windows Production PCA 2011 is still actively used to sign
 # any EFI binary.  Used to gate DBX2024 PCA 2011 CA revocation staging.
-# shellcheck disable=SC2034
 set -euo pipefail
 [[ -n "${_SB_ENEMA_BOOTLOADER_SCAN_SH:-}" ]] && return 0
 readonly _SB_ENEMA_BOOTLOADER_SCAN_SH=1
@@ -12,15 +11,11 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/common.sh"
 # shellcheck source=log.sh
 source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/log.sh"
 
-# ---------------------------------------------------------------------------
-# Certificate fingerprint constants (lowercase hex, no colons).
-# Kept in sync with _AUDIT_MS_WIN_PCA_2011 and _AUDIT_MS_UEFI_CA_2023
-# in audit.sh — both sets must be updated together.
-# ---------------------------------------------------------------------------
-readonly _BSCAN_MS_WIN_PCA_2011="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
-readonly _BSCAN_MS_WIN_UEFI_CA_2023="f6124e34125bee3fe6d79a574eaa7b91c0e7bd9d929c1a321178efd611dad901"
+# Microsoft cert fingerprints (SB_MS_*_FP) come from common.sh — single source
+# of truth shared with audit.sh and stage.sh.
 
 # Exported verdict variable — set by bootloader_scan_pca2011_in_use().
+# shellcheck disable=SC2034  # consumed by callers via export
 BSCAN_VERDICT=""
 
 # ---------------------------------------------------------------------------
@@ -72,13 +67,17 @@ _bscan_find_esp_partitions() {
 # ---------------------------------------------------------------------------
 # _bscan_mount_esp <dev> <mountpoint>
 #   Mount an EFI System Partition read-only.  Returns 1 on failure.
+#
+#   Uses `-t auto` so kernels without vfat (or with the ESP formatted as
+#   exfat on some Apple/UEFI configurations) still succeed.  Real ESPs are
+#   filtered upstream by partition type GUID, so auto-detection is safe.
 # ---------------------------------------------------------------------------
 _bscan_mount_esp() {
     local dev="$1"
     local mp="$2"
 
     log_info "Mounting ESP ${dev} at ${mp} (read-only)"
-    if ! mount -t vfat -o ro "${dev}" "${mp}" 2>/dev/null; then
+    if ! mount -t auto -o ro "${dev}" "${mp}" 2>/dev/null; then
         log_warn "Failed to mount ESP ${dev} at ${mp}"
         return 1
     fi
@@ -87,11 +86,16 @@ _bscan_mount_esp() {
 
 # ---------------------------------------------------------------------------
 # _bscan_umount_esp <mountpoint>
-#   Unmount an ESP (best-effort; never fails).
+#   Unmount an ESP if (and only if) it is currently a mountpoint.  Best-effort
+#   — never fails.  Using mountpoint(1) avoids swallowing the unrelated
+#   "umount: not mounted" stderr that complicates failure diagnosis.
 # ---------------------------------------------------------------------------
 _bscan_umount_esp() {
     local mp="$1"
-    umount "${mp}" 2>/dev/null || true
+    if command -v mountpoint >/dev/null 2>&1; then
+        mountpoint -q "${mp}" || return 0
+    fi
+    umount "${mp}" 2>/dev/null || log_warn "umount ${mp} failed (continuing)"
 }
 
 # ---------------------------------------------------------------------------
@@ -154,8 +158,15 @@ _bscan_linux_efi_binaries() {
 
 # ---------------------------------------------------------------------------
 # _bscan_extract_signing_ca_fps <efi_binary>
-#   Extract the SHA-256 fingerprints of all CA certificates in the Authenticode
-#   signing chain embedded in <efi_binary>.  Prints one fingerprint per line.
+#   Extract the SHA-256 fingerprints of every certificate (signer leaf and
+#   intermediate/root CAs) embedded in the Authenticode signing chain of
+#   <efi_binary>.  Prints one fingerprint per line.
+#
+#   Filtering to issuer-only would require reliably parsing each cert's
+#   Issuer DN against the chain — needlessly fragile when the caller (the
+#   PCA 2011 detection loop) only does an equality test against a known
+#   set of CA fingerprints.  Including the leaf signer is harmless: leaf
+#   fingerprints differ from CA fingerprints, so they never match.
 #
 #   Preferred path: osslsigncode (BR2_PACKAGE_OSSLSIGNCODE=y enables this)
 #   Fallback path:  sbverify --list (issuer name matching; less reliable)
@@ -226,12 +237,16 @@ _bscan_extract_signing_ca_fps() {
             # callers can still do fingerprint comparisons even on this path.
             case "${issuer}" in
                 *"Windows Production PCA 2011"*)
-                    echo "${_BSCAN_MS_WIN_PCA_2011}" ;;
+                    echo "${SB_MS_WIN_PCA_2011_FP}" ;;
                 *"Windows UEFI CA 2023"*)
-                    echo "${_BSCAN_MS_WIN_UEFI_CA_2023}" ;;
+                    echo "${SB_MS_WIN_UEFI_CA_2023_FP}" ;;
             esac
+            # Anchor the match to the start of the line (after optional
+            # leading whitespace) so a "subject name:" line that contains
+            # the substring "issuer" in a CN is not misclassified.
         done < <(sbverify --list "${efi_binary}" 2>/dev/null \
-                     | grep -i "issuer" | awk -F: '{print $2}')
+                     | grep -i '^[[:space:]]*issuer' \
+                     | awk -F: '{print $2}')
 
         return 0
     fi
@@ -319,7 +334,7 @@ bootloader_scan_pca2011_in_use() {
 
             while IFS= read -r fp; do
                 [[ -n "${fp}" ]] || continue
-                if [[ "${fp}" == "${_BSCAN_MS_WIN_PCA_2011}" ]]; then
+                if [[ "${fp}" == "${SB_MS_WIN_PCA_2011_FP}" ]]; then
                     log_warn "PCA 2011 signer found in: ${binary}"
                     pca2011_found=1
                 fi

@@ -36,12 +36,9 @@ MSFT_PAYLOADS_SUBDIR="${PAYLOAD_DIR}/microsoft"
 MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 
 # ---------------------------------------------------------------------------
-# SHA-256 fingerprints of legacy Microsoft certificates excluded from the
-# Custom-Owned (user-key) enrollment path.  Both are expiring in 2026 and
-# are superseded by their 2023 counterparts.
+# Microsoft cert fingerprint constants come from common.sh (SB_MS_*_FP) —
+# single source of truth shared with audit.sh and bootloader-scan.sh.
 # ---------------------------------------------------------------------------
-readonly _STAGE_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
-readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
 
 # ---------------------------------------------------------------------------
 # Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
@@ -521,7 +518,7 @@ _stage_build_kek_esl() {
             cert_fp=$(_stage_cert_fp "${cert_pem}")
             if [[ -z "${cert_fp}" ]]; then
                 log_warn "Could not compute fingerprint for KEK cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_KEK_CA_2011_FP}" ]]; then
+            elif [[ "${cert_fp}" == "${SB_MS_KEK_CA_2011_FP}" ]]; then
                 log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
                 continue
             fi
@@ -599,7 +596,7 @@ _stage_build_db_esl() {
             cert_fp=$(_stage_cert_fp "${cert_pem}")
             if [[ -z "${cert_fp}" ]]; then
                 log_warn "Could not compute fingerprint for db cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_WIN_PCA_2011_FP}" ]]; then
+            elif [[ "${cert_fp}" == "${SB_MS_WIN_PCA_2011_FP}" ]]; then
                 log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
                 continue
             fi
