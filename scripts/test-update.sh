@@ -216,8 +216,9 @@ _EFIVAR_CERT_CACHE_DIR=""
 # rejected after canonicalization resolves it out of /tmp.
 _traversal_dir="${REPO_ROOT}/.test-traversal-cache-$$"
 mkdir -p "${_traversal_dir}"
-# Build a traversal path: /tmp/../<absolute non-tmp dir>
-_traversal_path="/tmp/../${_traversal_dir#/}"
+# Build a traversal path: /tmp/../<absolute non-tmp dir> (double-slash is fine;
+# readlink -f resolves it to the real path which must not start with /tmp/).
+_traversal_path="/tmp/../${_traversal_dir}"
 _EFIVAR_CERT_CACHE_DIR="${_traversal_path}"
 rc=0
 (efivar_cert_cache_clear 2>/dev/null) || rc=$?
