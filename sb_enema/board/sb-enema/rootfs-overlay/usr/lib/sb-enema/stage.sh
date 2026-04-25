@@ -245,15 +245,14 @@ _pk_wrap_esl() {
     local efi_time_hex='da0703061311150000000000ff070000'
 
     # WIN_CERTIFICATE_UEFI_GUID (UEFI §32.4.1) — 24 bytes.
-    #   dwLength             = 0x0000003D (61 = sizeof header(24) + sizeof PKCS7(37))
+    #   dwLength             = computed below from segment sizes
+    #                          (= EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE +
+    #                             sizeof(pkcs7_empty_hex))
     #   wRevision            = 0x0200 (EFI_WIN_CERT_REVISION_LE_HEX)
     #   wCertificateType     = 0x0EF1 = WIN_CERT_TYPE_EFI_GUID
     #                          (EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX)
     #   CertType GUID        = EFI_CERT_TYPE_PKCS7_GUID
     #                          (EFI_CERT_TYPE_PKCS7_GUID_LE_HEX)
-    local wincert_dwlen_hex='3d000000'
-    local wincert_hdr_hex="${wincert_dwlen_hex}${EFI_WIN_CERT_REVISION_LE_HEX}${EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX}${EFI_CERT_TYPE_PKCS7_GUID_LE_HEX}"
-
     # PKCS#7-style empty SignedData CertData — 37 bytes, the minimum
     # DER-encoded "empty" SignedData accepted as the AuthInfo.CertData.
     # This is what the Microsoft secureboot_objects build emits in
@@ -273,10 +272,33 @@ _pk_wrap_esl() {
     #     31 00               SET, length 0        (SignerInfos = empty)
     local pkcs7_empty_hex='3023020101310f300d06096086480165030402010500300b06092a864886f70d0107013100'
 
+    # Compute dwLength from segment sizes so the WIN_CERTIFICATE header
+    # cannot silently desync from its CertData payload if the latter is
+    # ever edited.  Format as 4-byte little-endian hex.
+    local pkcs7_size=$(( ${#pkcs7_empty_hex} / 2 ))
+    local wincert_dwlen=$(( EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE + pkcs7_size ))
+    local wincert_dwlen_hex
+    wincert_dwlen_hex=$(printf '%02x%02x%02x%02x' \
+        $((  wincert_dwlen        & 0xff )) \
+        $(( (wincert_dwlen >>  8) & 0xff )) \
+        $(( (wincert_dwlen >> 16) & 0xff )) \
+        $(( (wincert_dwlen >> 24) & 0xff )))
+    local wincert_hdr_hex="${wincert_dwlen_hex}${EFI_WIN_CERT_REVISION_LE_HEX}${EFI_AUTH2_WIN_CERT_TYPE_GUID_LE_HEX}${EFI_CERT_TYPE_PKCS7_GUID_LE_HEX}"
+
     # Convert the concatenated hex string into a printf escape sequence
     # ("\xNN\xNN..."), then emit raw bytes via printf %b.  Avoids depending
     # on xxd, which is not enabled in the busybox build.
     local hex_all="${efi_time_hex}${wincert_hdr_hex}${pkcs7_empty_hex}"
+
+    # Assertion: the assembled header must be exactly
+    # EFI_AUTH2_FIXED_HEADER_SIZE (= EFI_TIME + WIN_CERTIFICATE header)
+    # + CertData.  This catches any future edit that desyncs the segments.
+    local expected_total=$(( EFI_AUTH2_FIXED_HEADER_SIZE + pkcs7_size ))
+    local actual_total=$(( ${#hex_all} / 2 ))
+    if (( actual_total != expected_total )); then
+        die "_pk_wrap_esl: internal error: assembled header is ${actual_total} bytes; expected ${expected_total}"
+    fi
+
     local i escapes=""
     for (( i = 0; i < ${#hex_all}; i += 2 )); do
         escapes+="\\x${hex_all:i:2}"

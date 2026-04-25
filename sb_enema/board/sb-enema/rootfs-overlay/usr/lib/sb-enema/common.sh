@@ -76,7 +76,9 @@ readonly EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE=24
 
 # Total size of the EFI_TIME + WIN_CERTIFICATE_UEFI_GUID fixed prefix; any
 # valid EFI_VARIABLE_AUTHENTICATION_2 file must be at least this large.
-readonly EFI_AUTH2_FIXED_HEADER_SIZE=40   # = EFI_TIME_SIZE + EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE
+# Derived from its components so it can never silently diverge if either
+# component size is ever adjusted.
+readonly EFI_AUTH2_FIXED_HEADER_SIZE=$((EFI_TIME_SIZE + EFI_AUTH2_WINCERT_UEFI_GUID_HDR_SIZE))
 
 # wRevision == 0x0200 little-endian (UEFI §32.4.1).
 readonly EFI_WIN_CERT_REVISION_LE_HEX="0002"
