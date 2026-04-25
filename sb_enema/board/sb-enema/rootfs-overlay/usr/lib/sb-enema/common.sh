@@ -210,6 +210,124 @@ _fp_normalize() {
 }
 
 # ---------------------------------------------------------------------------
+# _path_has_dot_segments <path>
+#   Return success (0) when <path> contains "." or ".." path segments.
+#   Used by _safe_rm_dir_assert() to refuse path-traversal strings before
+#   they ever reach rm -rf.
+# ---------------------------------------------------------------------------
+_path_has_dot_segments() {
+    case "${1}" in
+        */./*|*/../*|*/.|*/..)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# _safe_rm_dir_assert <path> <label> [<allowed_prefix>...]
+#   Validate that <path> is safe to pass to `rm -rf`:
+#     1. Non-empty string.
+#     2. Absolute path (starts with /).
+#     3. Not an exact top-level allowed prefix root (e.g. "/tmp", "/tmp/").
+#     4. Contains no "." or ".." path segments.
+#     5. Begins with one of the supplied <allowed_prefix> values (each of
+#        which must end in "/").  If no prefixes are supplied, defaults to
+#        "/mnt/" and "/tmp/".
+#     6. If <path> exists, it is not a symlink, and its canonical resolved
+#        form also satisfies (3) and (5).
+#
+#   <label> is a short identifier (e.g. "PAYLOAD_DIR", "cache path") that
+#   is included verbatim in error messages so callers do not need to
+#   reformat them.
+#
+#   Returns 0 on success, with no output.  Calls die() on any violation
+#   so the caller never reaches rm -rf.  This function intentionally does
+#   NOT print a result on stdout: doing so would force callers into
+#   `var=$(_safe_rm_dir_assert ...)` form, where a die() inside the
+#   command substitution only exits the substitution subshell — bash does
+#   not propagate that failure to the caller without `inherit_errexit`,
+#   so the caller could silently proceed with an empty value.  Callers
+#   that need the canonical resolved path can call `readlink -f` after a
+#   successful assertion; the validator has already proved that the
+#   original path is not a symlink and that its canonical form is under
+#   one of the allowed prefixes.
+# ---------------------------------------------------------------------------
+_safe_rm_dir_assert() {
+    local path="$1"
+    local label="$2"
+    shift 2 || true
+
+    local -a prefixes
+    if [[ $# -gt 0 ]]; then
+        prefixes=("$@")
+    else
+        prefixes=("/mnt/" "/tmp/")
+    fi
+
+    if [[ -z "${path}" ]]; then
+        die "${label} is empty; refusing to run rm -rf on an unsafe path"
+    fi
+
+    if [[ "${path}" != /* ]]; then
+        die "${label} ('${path}') is not an absolute path; refusing to run rm -rf"
+    fi
+
+    local p
+    for p in "${prefixes[@]}"; do
+        # Each prefix is expected to end in "/"; the corresponding root is
+        # the prefix with the trailing slash removed (e.g. "/tmp/" -> "/tmp").
+        local root="${p%/}"
+        if [[ "${path}" == "${root}" || "${path}" == "${root}/" ]]; then
+            die "${label} ('${path}') must not be an allowed mount root; refusing to run rm -rf"
+        fi
+    done
+
+    if _path_has_dot_segments "${path}"; then
+        die "${label} ('${path}') contains '.' or '..' path segments; refusing to run rm -rf"
+    fi
+
+    local matched=0
+    for p in "${prefixes[@]}"; do
+        if [[ "${path}" == "${p}"* ]]; then
+            matched=1
+            break
+        fi
+    done
+    if (( matched == 0 )); then
+        die "${label} ('${path}') does not start with an expected prefix (${prefixes[*]}); refusing to run rm -rf"
+    fi
+
+    if [[ -e "${path}" ]]; then
+        if [[ -L "${path}" ]]; then
+            die "${label} ('${path}') is a symlink; refusing to run rm -rf"
+        fi
+
+        local resolved
+        resolved="$(readlink -f -- "${path}")" \
+            || die "Failed to canonicalize ${label} ('${path}'); refusing to run rm -rf"
+
+        for p in "${prefixes[@]}"; do
+            local root="${p%/}"
+            if [[ "${resolved}" == "${root}" || "${resolved}" == "${root}/" ]]; then
+                die "Resolved ${label} ('${resolved}') must not be an allowed mount root; refusing to run rm -rf"
+            fi
+        done
+
+        matched=0
+        for p in "${prefixes[@]}"; do
+            if [[ "${resolved}" == "${p}"* ]]; then
+                matched=1
+                break
+            fi
+        done
+        if (( matched == 0 )); then
+            die "Resolved ${label} ('${resolved}') does not start with an expected prefix (${prefixes[*]}); refusing to run rm -rf"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # efivar_is_auth_file <file>
 #   Returns 0 if <file> looks like a well-formed
 #   EFI_VARIABLE_AUTHENTICATION_2 descriptor (UEFI 2.x §8.2.2); returns 1 if
