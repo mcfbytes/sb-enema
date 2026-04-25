@@ -115,8 +115,12 @@ _bscan_windows_efi_binaries() {
 
 # ---------------------------------------------------------------------------
 # _bscan_linux_efi_binaries <esp_mount>
-#   Print a newline-separated list of SHIM/Linux EFI binaries found under
-#   <esp_mount>/EFI/, excluding the Microsoft/ and BOOT/ subtrees.
+#   Print a newline-separated list of bootloader EFI binaries that are not
+#   under EFI/Microsoft/ — i.e. SHIM/Linux loaders plus the UEFI-spec-mandated
+#   removable-media fallback (EFI/BOOT/BOOTX64.EFI and friends).  The fallback
+#   is the most common location to find a PCA 2011-signed loader on Windows
+#   installs and recovery media, so excluding it would produce a false CLEAR
+#   verdict.
 # ---------------------------------------------------------------------------
 _bscan_linux_efi_binaries() {
     local esp_mount="$1"
@@ -126,14 +130,20 @@ _bscan_linux_efi_binaries() {
 
     local f
     while IFS= read -r f; do
-        # Exclude Microsoft and fallback BOOT directories
+        # Microsoft/ is already covered by _bscan_windows_efi_binaries and any
+        # match here would be a duplicate.
         [[ "${f}" == *"/EFI/Microsoft/"* ]] && continue
-        [[ "${f}" == *"/EFI/BOOT/"* ]]      && continue
-        [[ "${f}" == *"/EFI/boot/"* ]]       && continue
 
-        # Include only recognisable bootloader filenames
         local base
         base=$(basename "${f}")
+
+        # Always include EFI/BOOT/* binaries (UEFI removable-media fallback).
+        if [[ "${f}" == *"/EFI/BOOT/"* ]] || [[ "${f}" == *"/EFI/boot/"* ]]; then
+            echo "${f}"
+            continue
+        fi
+
+        # Otherwise include only recognisable bootloader filenames.
         case "${base,,}" in
             *shim* | *grub* | *grubx64* | *grubaa64* | *grubarm* | \
             *elilo* | *fwupd* | *fwupdx64*)
@@ -262,6 +272,11 @@ bootloader_scan_pca2011_in_use() {
     fi
 
     local esp esp_mp
+    # Track sha256 content hashes of binaries already scanned so the same file
+    # (e.g. EFI/BOOT/BOOTX64.EFI as a byte-identical copy of bootmgfw.efi) is
+    # not double-counted across scans on the same or different ESPs.
+    local -A seen_hashes=()
+
     for esp in "${esp_list[@]}"; do
         esp_mp="${tmpdir}/esp-$(basename "${esp}")"
         mkdir -p "${esp_mp}"
@@ -279,10 +294,21 @@ bootloader_scan_pca2011_in_use() {
             _bscan_linux_efi_binaries   "${esp_mp}" 2>/dev/null || true
         )
 
-        _bscan_umount_esp "${esp_mp}"
-
+        # Extraction must run while the ESP is still mounted; only umount
+        # after all binaries on this ESP have been processed.
         local binary fp
         for binary in "${binaries[@]}"; do
+            [[ -f "${binary}" ]] || continue
+
+            local content_hash
+            content_hash=$(sha256sum "${binary}" 2>/dev/null | awk '{print $1}') || content_hash=""
+            if [[ -n "${content_hash}" ]] && [[ -n "${seen_hashes[${content_hash}]:-}" ]]; then
+                # Byte-identical to a previously scanned file (typically
+                # EFI/BOOT/BOOTX64.EFI being a copy of bootmgfw.efi).
+                continue
+            fi
+            [[ -n "${content_hash}" ]] && seen_hashes["${content_hash}"]=1
+
             local fps
             fps=$(_bscan_extract_signing_ca_fps "${binary}" 2>/dev/null) || {
                 log_warn "Failed to extract signing CAs from ${binary}; skipping"
@@ -299,6 +325,8 @@ bootloader_scan_pca2011_in_use() {
                 fi
             done <<< "${fps}"
         done
+
+        _bscan_umount_esp "${esp_mp}"
     done
 
     if [[ "${pca2011_found}" -eq 1 ]]; then

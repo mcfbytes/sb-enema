@@ -181,7 +181,12 @@ handle_microsoft_suppository() {
     stage_clear || { log_error "Failed to clear staging area"; return 1; }
 
     stage_microsoft_kek_db_dbx || { log_error "Failed to stage Microsoft KEK/DB/DBX"; return 1; }
-    stage_dbx_with_pca2011_check || log_warn "DBX staging with PCA 2011 check encountered issues"
+
+    # The pre-signed Microsoft dbx.auth cannot be re-signed without user keys,
+    # so DBX2024 cannot be filtered on this path.  Run an informational scan
+    # and warn loudly if PCA 2011 is still in use; the operator should use
+    # the user-keyed Full Colonic path or update Windows first.
+    stage_advise_pca2011_for_pre_signed || true
 
     enroll || { log_error "Microsoft Suppository enrollment failed"; return 1; }
 
