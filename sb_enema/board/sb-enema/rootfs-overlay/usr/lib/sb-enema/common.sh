@@ -90,6 +90,45 @@ require_setup_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# _fp_normalize <raw_fingerprint_string>
+#   Normalize a SHA-1/SHA-256 fingerprint string into canonical form:
+#   strip everything up to and including the last '=' (drops the
+#   "SHA256 Fingerprint=" / "sha1 Fingerprint=" prefix produced by
+#   `openssl x509 ... -fingerprint`), remove colon separators, and
+#   lowercase the result.  Trailing whitespace is also stripped.
+#
+#   This is the single canonical normalization used for fingerprint
+#   comparison across the codebase; previously the pipeline
+#     sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]'
+#   was duplicated (with minor variants) at five-plus call sites.
+#
+#   Input may be:
+#     * the full openssl line, e.g. "SHA256 Fingerprint=AA:BB:..."
+#     * a colon-separated hex fingerprint, e.g. "AA:BB:..."
+#     * an already-normalized lowercase hex string (idempotent).
+#
+#   Usage:
+#     fp=$(_fp_normalize "$(openssl x509 ... -fingerprint -sha256)")
+#   or piped:
+#     fp=$(openssl x509 ... -fingerprint -sha256 | _fp_normalize)
+# ---------------------------------------------------------------------------
+_fp_normalize() {
+    local raw
+    if [[ $# -gt 0 ]]; then
+        raw="$1"
+    else
+        raw=$(cat)
+    fi
+    # Strip everything up to and including the last '=' (handles both
+    # "SHA256 Fingerprint=..." and inputs that contain no '=' at all).
+    raw="${raw##*=}"
+    # Strip trailing whitespace/newline that openssl may emit.
+    raw="${raw%%[[:space:]]*}"
+    # Remove colon separators, lowercase.
+    printf '%s' "${raw}" | tr -d ':' | tr '[:upper:]' '[:lower:]'
+}
+
+# ---------------------------------------------------------------------------
 # efivar_is_auth_file <file>
 #   Returns 0 if <file> looks like a well-formed
 #   EFI_VARIABLE_AUTHENTICATION_2 descriptor (UEFI 2.x §8.2.2); returns 1 if

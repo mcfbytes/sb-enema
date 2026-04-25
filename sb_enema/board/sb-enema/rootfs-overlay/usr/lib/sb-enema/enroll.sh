@@ -57,9 +57,9 @@ _enroll_staged_fingerprints() {
         candidates=$((candidates + 1))
         local fp
         fp=$(openssl x509 -in "${cert_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//') \
+                | _fp_normalize) \
         || fp=$(openssl x509 -in "${cert_file}" -inform PEM -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//') \
+                | _fp_normalize) \
         || continue
         echo "${fp}"
         found=1

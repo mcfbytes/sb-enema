@@ -72,8 +72,7 @@ _audit_add_finding() {
 _audit_cert_fingerprint() {
     local der_file="$1"
     openssl x509 -in "${der_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-        | sed 's/.*Fingerprint=//;s/://g' \
-        | tr '[:upper:]' '[:lower:]'
+        | _fp_normalize
 }
 
 # ---------------------------------------------------------------------------

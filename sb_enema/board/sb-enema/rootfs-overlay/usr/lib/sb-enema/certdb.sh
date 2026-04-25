@@ -80,11 +80,10 @@ _certdb_is_user_pk() {
 
     local cert_fp
     cert_fp=$(openssl x509 -in "${user_pk_cert}" -noout -fingerprint -sha256 2>/dev/null \
-              | sed 's/.*Fingerprint=//;s/://g' \
-              | tr '[:upper:]' '[:lower:]') || return 1
+              | _fp_normalize) || return 1
 
     local pk_sha256_lower
-    pk_sha256_lower=$(printf '%s' "${pk_sha256}" | tr '[:upper:]' '[:lower:]')
+    pk_sha256_lower=$(_fp_normalize "${pk_sha256}")
 
     [[ "${cert_fp}" == "${pk_sha256_lower}" ]]
 }
@@ -106,11 +105,10 @@ _certdb_is_user_kek() {
 
     local cert_fp
     cert_fp=$(openssl x509 -in "${user_kek_cert}" -noout -fingerprint -sha256 2>/dev/null \
-              | sed 's/.*Fingerprint=//;s/://g' \
-              | tr '[:upper:]' '[:lower:]') || return 1
+              | _fp_normalize) || return 1
 
     local kek_sha256_lower
-    kek_sha256_lower=$(printf '%s' "${kek_sha256}" | tr '[:upper:]' '[:lower:]')
+    kek_sha256_lower=$(_fp_normalize "${kek_sha256}")
 
     [[ "${cert_fp}" == "${kek_sha256_lower}" ]]
 }

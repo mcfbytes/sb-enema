@@ -347,7 +347,7 @@ _efivar_cert_summary() {
     not_after=$(openssl x509 -in "${der_file}" -inform DER -noout -enddate 2>/dev/null \
         | sed 's/^notAfter=//') || not_after="(unknown)"
     fingerprint=$(openssl x509 -in "${der_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-        | sed 's/^.*Fingerprint=//') || fingerprint="(unknown)"
+        | _fp_normalize) || fingerprint="(unknown)"
 
     echo "Subject:     ${subject}"
     echo "Issuer:      ${issuer}"
@@ -394,7 +394,7 @@ efivar_list_certs() {
             not_after=$(openssl x509 -in "${der_file}" -inform DER -noout -enddate 2>/dev/null \
                 | sed 's/^notAfter=//') || not_after="(unknown)"
             fingerprint=$(openssl x509 -in "${der_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/^.*Fingerprint=//') || fingerprint="(unknown)"
+                | _fp_normalize) || fingerprint="(unknown)"
 
             echo "[${index}] ${subject} | Issuer=${issuer} | Expires=${not_after} | SHA256=${fingerprint}"
             index=$((index + 1))
