@@ -104,31 +104,6 @@ _enroll_report_partial_failure() {
 }
 
 # ---------------------------------------------------------------------------
-# _enroll_is_auth_file <file>
-#   Returns 0 if <file> is an EFI_VARIABLE_AUTHENTICATION_2 signed auth file;
-#   returns 1 if it is a raw EFI Signature List (no auth header).
-#   Detection: WIN_CERTIFICATE.wCertificateType == 0x0EF1 at byte offset 22,
-#   which is the same heuristic used by _dbx_esl_from_auth_or_raw() in stage.sh.
-#
-#   Signed auth files must be written via:  efi-updatevar -f <file> <var>
-#   Raw ESLs (Setup Mode only) must use:    efi-updatevar -e -f <file> <var>
-# ---------------------------------------------------------------------------
-_enroll_is_auth_file() {
-    local file="$1"
-    # File must be at least 24 bytes to contain the WIN_CERTIFICATE type field at offset 22.
-    # Too-small files (or unreadable ones) are treated as raw ESLs; efi-updatevar will catch
-    # any real I/O error.  dd stderr is suppressed to avoid spurious enrollment log noise.
-    local fsize
-    fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)
-    if [[ "${fsize}" -lt 24 ]]; then
-        return 1
-    fi
-    local type_bytes
-    type_bytes=$(dd if="${file}" bs=1 skip=22 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    [[ "${type_bytes}" == "f10e" ]]
-}
-
-# ---------------------------------------------------------------------------
 # _enroll_var <varname> <auth_file> <enrolled_vars_ref> [expected_fps]
 #   Internal helper: write one EFI variable using efi-updatevar, verify,
 #   log, and handle failure.
@@ -162,7 +137,7 @@ _enroll_var() {
     # Use -e -f for raw EFI Signature Lists (Setup Mode only):
     #   • microsoft/KEK.auth, db.auth, dbx.auth (from Firmware/*.bin raw ESLs)
     local -a efi_args
-    if _enroll_is_auth_file "${auth_file}"; then
+    if efivar_is_auth_file "${auth_file}"; then
         efi_args=("-f")
     else
         efi_args=("-e" "-f")

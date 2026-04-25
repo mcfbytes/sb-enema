@@ -88,3 +88,60 @@ require_setup_mode() {
         die "System is not in UEFI Setup Mode (SetupMode=${raw}). Enroll keys from firmware setup first."
     fi
 }
+
+# ---------------------------------------------------------------------------
+# efivar_is_auth_file <file>
+#   Returns 0 if <file> looks like a well-formed
+#   EFI_VARIABLE_AUTHENTICATION_2 descriptor (UEFI 2.x §8.2.2); returns 1 if
+#   it is anything else (raw EFI Signature List, DER certificate, junk, etc.).
+#
+#   File layout validated (UEFI 2.x):
+#     offset  size   field                 expected
+#     0       16     EFI_TIME TimeStamp    (any value; not validated here)
+#     16      4      WIN_CERTIFICATE.dwLength (uint32 LE, must be >= 24 and
+#                                          16 + dwLength must be <= file size)
+#     20      2      WIN_CERTIFICATE.wRevision   == 0x0200 (little-endian
+#                                                 bytes 00 02)
+#     22      2      WIN_CERTIFICATE.wCertificateType == 0x0EF1 (LE bytes
+#                                                       F1 0E,
+#                                                       WIN_CERT_TYPE_EFI_GUID)
+#     24      16     EFI_GUID CertType    == EFI_CERT_TYPE_PKCS7_GUID
+#                                           (4aafd29d-68df-49ee-8aa9-347d375665a7
+#                                            -> mixed-endian raw bytes
+#                                              9dd2af4adf68ee498aa9347d375665a7)
+#
+#   Anything failing those checks is treated as a non-auth payload (a raw ESL
+#   or unrelated file).  Unreadable files / I/O errors return 1 so that the
+#   caller falls through to the raw-ESL path; the underlying tool
+#   (efi-updatevar, sign-efi-sig-list, etc.) will surface any real I/O error
+#   when it actually tries to use the file.
+# ---------------------------------------------------------------------------
+efivar_is_auth_file() {
+    local file="$1"
+    [[ -f "${file}" && -r "${file}" ]] || return 1
+    local fsize
+    fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)
+    # 16 (EFI_TIME) + 8 (WIN_CERTIFICATE) + 16 (CertType GUID) = 40 bytes minimum.
+    [[ "${fsize}" -ge 40 ]] || return 1
+    # Read the 24-byte WIN_CERTIFICATE_UEFI_GUID header (offsets 16..39) in a
+    # single dd call to minimize subshell churn and avoid races on slow I/O.
+    local hdr
+    hdr=$(dd if="${file}" bs=1 skip=16 count=24 2>/dev/null | od -An -tx1 -v | tr -d ' \n') || return 1
+    [[ "${#hdr}" -eq 48 ]] || return 1
+    # wRevision (bytes 20..21, LE 0x0200)
+    [[ "${hdr:8:4}" == "0002" ]] || return 1
+    # wCertificateType (bytes 22..23, LE 0x0EF1, WIN_CERT_TYPE_EFI_GUID)
+    [[ "${hdr:12:4}" == "f10e" ]] || return 1
+    # CertType (bytes 24..39, EFI_CERT_TYPE_PKCS7_GUID raw little-endian form)
+    [[ "${hdr:16:32}" == "9dd2af4adf68ee498aa9347d375665a7" ]] || return 1
+    # dwLength (uint32 LE at bytes 16..19): must cover at least the
+    # WIN_CERTIFICATE_UEFI_GUID header (24 bytes) and not exceed file size - 16.
+    # hdr offsets 0..7 are the four little-endian bytes of dwLength (b0,b1,b2,b3);
+    # reconstruct via shifts to keep the byte-order intent explicit.
+    local dwlen
+    dwlen=$(( (16#${hdr:6:2} << 24) | (16#${hdr:4:2} << 16) | \
+              (16#${hdr:2:2} <<  8) |  16#${hdr:0:2} ))
+    (( dwlen >= 24 )) || return 1
+    (( 16 + dwlen <= fsize )) || return 1
+    return 0
+}

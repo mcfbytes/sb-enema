@@ -465,3 +465,4 @@ efivar_get_secure_boot_state() {
         echo "0"
     fi
 }
+
