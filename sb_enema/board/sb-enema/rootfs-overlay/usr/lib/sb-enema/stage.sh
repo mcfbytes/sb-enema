@@ -49,72 +49,16 @@ readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8
 KEK_UPDATE_MAP="${DATA_MOUNT}/sb-enema/kek_update_map.json"
 
 # ---------------------------------------------------------------------------
-# _stage_path_has_dot_segments()
-#   Return success (0) when the supplied absolute path contains "." or ".."
-#   segments, which must never be allowed to influence rm -rf targets.
-# ---------------------------------------------------------------------------
-_stage_path_has_dot_segments() {
-    case "${1}" in
-        */./*|*/../*|*/.|*/..)
-            return 0
-            ;;
-    esac
-    return 1
-}
-
-# ---------------------------------------------------------------------------
 # _stage_assert_payload_dir_safe()
-#   Validate that PAYLOAD_DIR is safe to pass to rm -rf:
-#     1. Non-empty string.
-#     2. Absolute path (starts with /).
-#     3. Not an exact top-level allowed mount root (/mnt, /mnt/, /tmp, /tmp/).
-#     4. Contains no "." or ".." path segments.
-#     5. Begins with an expected prefix (/mnt/ or /tmp/).
-#     6. If it exists, is not a symlink and resolves under the same prefixes.
-#   Calls die() on any violation so the caller never reaches rm -rf.
+#   Validate that PAYLOAD_DIR is safe to pass to rm -rf.  Thin wrapper
+#   around the shared _safe_rm_dir_assert() utility in common.sh, which
+#   enforces: non-empty, absolute path, not an allowed mount root, no
+#   "." or ".." segments, expected /mnt/ or /tmp/ prefix, and (if the
+#   directory exists) not a symlink with a canonical form that satisfies
+#   the same rules.  Calls die() on any violation.
 # ---------------------------------------------------------------------------
 _stage_assert_payload_dir_safe() {
-    local payload_dir
-    local resolved_dir
-
-    payload_dir="${PAYLOAD_DIR:-}"
-
-    if [[ -z "${payload_dir}" ]]; then
-        die "PAYLOAD_DIR is empty; refusing to run rm -rf on an unsafe path"
-    fi
-
-    if [[ "${payload_dir}" != /* ]]; then
-        die "PAYLOAD_DIR ('${payload_dir}') is not an absolute path; refusing to run rm -rf"
-    fi
-
-    if [[ "${payload_dir}" == "/mnt" || "${payload_dir}" == "/mnt/" || "${payload_dir}" == "/tmp" || "${payload_dir}" == "/tmp/" ]]; then
-        die "PAYLOAD_DIR ('${payload_dir}') must not be an allowed mount root; refusing to run rm -rf"
-    fi
-
-    if _stage_path_has_dot_segments "${payload_dir}"; then
-        die "PAYLOAD_DIR ('${payload_dir}') contains '.' or '..' path segments; refusing to run rm -rf"
-    fi
-
-    if [[ "${payload_dir}" != /mnt/* && "${payload_dir}" != /tmp/* ]]; then
-        die "PAYLOAD_DIR ('${payload_dir}') does not start with an expected prefix (/mnt/ or /tmp/); refusing to run rm -rf"
-    fi
-
-    if [[ -e "${payload_dir}" ]]; then
-        if [[ -L "${payload_dir}" ]]; then
-            die "PAYLOAD_DIR ('${payload_dir}') is a symlink; refusing to run rm -rf"
-        fi
-
-        resolved_dir="$(readlink -f -- "${payload_dir}")" \
-            || die "Failed to canonicalize PAYLOAD_DIR ('${payload_dir}'); refusing to run rm -rf"
-
-        if [[ "${resolved_dir}" == "/mnt" || "${resolved_dir}" == "/mnt/" || "${resolved_dir}" == "/tmp" || "${resolved_dir}" == "/tmp/" ]]; then
-            die "Resolved PAYLOAD_DIR ('${resolved_dir}') must not be an allowed mount root; refusing to run rm -rf"
-        fi
-
-        if [[ "${resolved_dir}" != /mnt/* && "${resolved_dir}" != /tmp/* ]]; then
-            die "Resolved PAYLOAD_DIR ('${resolved_dir}') does not start with an expected prefix (/mnt/ or /tmp/); refusing to run rm -rf"
-        fi
-    fi
+    _safe_rm_dir_assert "${PAYLOAD_DIR:-}" "PAYLOAD_DIR" "/mnt/" "/tmp/"
 }
 
 # ---------------------------------------------------------------------------
