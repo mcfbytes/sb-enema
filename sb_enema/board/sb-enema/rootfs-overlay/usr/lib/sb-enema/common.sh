@@ -269,6 +269,27 @@ _safe_rm_dir_assert() {
         prefixes=("/mnt/" "/tmp/")
     fi
 
+    # Enforce the contract on the prefixes themselves so that a future
+    # caller cannot silently weaken the guard by passing e.g. "/" (which
+    # would whitelist the entire filesystem) or "/tmp" (which would
+    # whitelist sibling paths like "/tmpfoo").  Each prefix must be an
+    # absolute path that ends with "/" and is strictly longer than "/".
+    local _pref
+    for _pref in "${prefixes[@]}"; do
+        if [[ -z "${_pref}" ]]; then
+            die "_safe_rm_dir_assert: empty allowed prefix is not permitted"
+        fi
+        if [[ "${_pref}" != /* ]]; then
+            die "_safe_rm_dir_assert: allowed prefix ('${_pref}') must be an absolute path"
+        fi
+        if [[ "${_pref}" != */ ]]; then
+            die "_safe_rm_dir_assert: allowed prefix ('${_pref}') must end with '/'"
+        fi
+        if [[ "${_pref}" == "/" ]]; then
+            die "_safe_rm_dir_assert: allowed prefix '/' would whitelist the entire filesystem"
+        fi
+    done
+
     if [[ -z "${path}" ]]; then
         die "${label} is empty; refusing to run rm -rf on an unsafe path"
     fi
