@@ -487,7 +487,8 @@ _stage_build_kek_esl() {
     : > "${combined_esl}"
 
     local user_kek_esl="${workdir}/KEK-user.esl"
-    cert-to-efi-sig-list -g "${owner_guid}" "${kek_crt}" "${user_kek_esl}"
+    cert-to-efi-sig-list -g "${owner_guid}" "${kek_crt}" "${user_kek_esl}" \
+        || die "cert-to-efi-sig-list failed for user KEK certificate ${kek_crt}"
     cat "${user_kek_esl}" >> "${combined_esl}"
     log_info "Added user KEK certificate"
 
@@ -522,7 +523,8 @@ _stage_build_kek_esl() {
                 log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
                 continue
             fi
-            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for Microsoft KEK certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added Microsoft KEK certificate: $(basename "${cert_file}")"
         done
@@ -545,7 +547,8 @@ _stage_build_kek_esl() {
             vendor_tmp_esl="${workdir}/KEK-vendor-$(basename "${vendor_der}").esl"
             vendor_cert_pem="${workdir}/KEK-vendor-$(basename "${vendor_der%.*}").pem"
             openssl x509 -inform DER -in "${vendor_der}" -out "${vendor_cert_pem}"
-            cert-to-efi-sig-list -g "${owner_guid}" "${vendor_cert_pem}" "${vendor_tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${vendor_cert_pem}" "${vendor_tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for vendor KEK certificate $(basename "${vendor_der}")"
             cat "${vendor_tmp_esl}" >> "${combined_esl}"
             log_info "Added staged vendor KEK certificate: $(basename "${vendor_der}")"
         done
@@ -598,7 +601,8 @@ _stage_build_db_esl() {
                 log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
                 continue
             fi
-            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}"
+            cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
+                || die "cert-to-efi-sig-list failed for db certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
             log_info "Added db certificate: $(basename "${cert_file}")"
         done
