@@ -158,17 +158,27 @@ _enroll_var() {
     if [[ "${rc}" -eq 0 ]]; then
         local sha256
         sha256=$(sha256sum "${auth_file}" | awk '{print $1}')
-        log_action "ENROLL" "${varname}" "SUCCESS" "SHA256=${sha256}"
-        _enrolled_ref+=("${varname}")
+        log_action "ENROLL" "${varname}" "WRITE_OK" "SHA256=${sha256}"
 
-        # Post-write verification (if expected fingerprints provided)
-        if [[ -n "${expected_fps}" ]] && ! safety_verify_write "${varname}" "${expected_fps}"; then
-            log_action "VERIFY" "${varname}" "FAIL" "post-write verification failed"
-            local enrolled_str="${_enrolled_ref[*]:-}"
-            _enroll_report_partial_failure "${varname} (verification)" "${enrolled_str:-(none)}"
-            echo -e "${RED}  Re-enter Setup Mode and try again.${RESET}"
-            return 1
+        # Post-write verification (only if expected fingerprints were provided).
+        # Record WRITE_OK after the firmware write succeeds, but only record
+        # VERIFIED and add to the enrolled list AFTER verification actually
+        # runs and passes, so the audit trail never reports a verified
+        # enrollment for a write whose fingerprint check failed -- and never
+        # reports VERIFIED when no verification was performed.
+        if [[ -n "${expected_fps}" ]]; then
+            if ! safety_verify_write "${varname}" "${expected_fps}"; then
+                log_action "VERIFY" "${varname}" "FAIL" "post-write verification failed"
+                local enrolled_str="${_enrolled_ref[*]:-}"
+                _enroll_report_partial_failure "${varname} (verification)" "${enrolled_str:-(none)}"
+                echo -e "${RED}  Re-enter Setup Mode and try again.${RESET}"
+                return 1
+            fi
+            log_action "ENROLL" "${varname}" "VERIFIED" "SHA256=${sha256}"
+        else
+            log_action "ENROLL" "${varname}" "UNVERIFIED" "SHA256=${sha256},no expected fingerprints"
         fi
+        _enrolled_ref+=("${varname}")
         return 0
     elif [[ "${rc}" -eq 124 ]]; then
         log_action "ENROLL" "${varname}" "FAIL" "efi-updatevar timed out after 30 seconds"
