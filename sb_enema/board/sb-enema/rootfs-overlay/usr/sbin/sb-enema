@@ -96,9 +96,9 @@ show_menu() {
 }
 
 # ---------------------------------------------------------------------------
-# handle_option_1() — View Secure Boot report
+# handle_view_report() — View Secure Boot report
 # ---------------------------------------------------------------------------
-handle_option_1() {
+handle_view_report() {
     log_info "Menu selection: View Secure Boot report"
     echo
     report_full
@@ -311,10 +311,10 @@ handle_set_cert_cn() {
 }
 
 # ---------------------------------------------------------------------------
-# handle_option_14() — Restore OEM Defaults instructions
+# handle_restore_oem_instructions() — Restore OEM Defaults instructions
 # [14]
 # ---------------------------------------------------------------------------
-handle_option_14() {
+handle_restore_oem_instructions() {
     log_info "Menu selection: Restore OEM Defaults instructions"
     echo
     echo -e "${BOLD}Restore OEM Defaults — BIOS Instructions${RESET}"
@@ -360,10 +360,10 @@ handle_option_14() {
 }
 
 # ---------------------------------------------------------------------------
-# handle_option_15() — Exit
+# handle_exit() — Exit
 # [15]
 # ---------------------------------------------------------------------------
-handle_option_15() {
+handle_exit() {
     log_info "Menu selection: Exit"
     echo
     echo "Exiting SB-ENEMA. Thank you for using this tool."
@@ -381,7 +381,7 @@ run_menu_loop() {
         read -rp "Enter your choice [1-15]: " choice
 
         case "${choice}" in
-            1)  handle_option_1 ;;
+            1)  handle_view_report ;;
             2)  handle_full_colonic ;;
             3)  handle_microsoft_colonic ;;
             4)  handle_microsoft_suppository ;;
@@ -394,8 +394,8 @@ run_menu_loop() {
             11) handle_clear_staging ;;
             12) handle_apply ;;
             13) handle_set_cert_cn ;;
-            14) handle_option_14 ;;
-            15) handle_option_15 ;;
+            14) handle_restore_oem_instructions ;;
+            15) handle_exit ;;
             *)
                 echo -e "${RED}Invalid choice. Please enter a number between 1 and 15.${RESET}"
                 log_warn "Invalid menu selection: ${choice}"
@@ -412,7 +412,7 @@ run_cli_mode() {
 
     case "${operation}" in
         report|view-report)
-            handle_option_1
+            handle_view_report
             ;;
         full-colonic)
             handle_full_colonic
@@ -448,7 +448,7 @@ run_cli_mode() {
             handle_apply
             ;;
         restore-instructions)
-            handle_option_14
+            handle_restore_oem_instructions
             ;;
         *)
             echo -e "${RED}Error: Unknown CLI operation '${operation}'${RESET}" >&2

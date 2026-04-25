@@ -42,19 +42,13 @@ readonly BOARD_DIR
 readonly BINARIES_DIR="${BINARIES_DIR:-${1:-}}"
 readonly TARGET_DIR="${TARGET_DIR:-${2:-$(dirname "${BINARIES_DIR}")/target}}"
 
-readonly DATA_SEED_DIR="${BOARD_DIR}/exfat-seed"
-# EXFAT_SEED is kept as a backwards-compatible alias; prefer DATA_SEED_DIR.
-readonly EXFAT_SEED="${DATA_SEED_DIR}"
+readonly DATA_SEED_DIR="${BOARD_DIR}/data-seed"
 
 # Staging dir: secureboot artefacts produced at build time by
 # scripts/prepare-secureboot-objects.sh.  Override with SECUREBOOT_STAGING_DIR.
 readonly STAGING_DIR="${SECUREBOOT_STAGING_DIR:-${BOARD_DIR}/../../../output/secureboot-staging}"
 
-# Keep the image filename stable so genimage/genimage.cfg does not need to change.
-# The 'exfat' in the name reflects the original format; FAT32 is used now for
-# rootless tooling compatibility but the file is consumed identically by genimage.
-readonly DATA_IMG="${BINARIES_DIR}/sb-enema-exfat.img"
-# DATA_SIZE / EXFAT_SIZE: DATA_SIZE takes precedence; EXFAT_SIZE kept for backwards compatibility.
+readonly DATA_IMG="${BINARIES_DIR}/sb-enema-data.img"
 # Default is 36 MiB.  Must be large enough that mkfs.fat -F 32 produces ≥ 65,525 data
 # clusters (the FAT spec boundary between FAT16 and FAT32).  At 32 MiB the cluster
 # count falls to ~64,496 — below the threshold — so BusyBox blkid misclassifies the
@@ -62,7 +56,7 @@ readonly DATA_IMG="${BINARIES_DIR}/sb-enema-exfat.img"
 # instead of 0x43), returning an empty UUID and breaking automount.  36 MiB yields
 # ~72,544 clusters, comfortably above the threshold.
 # Override at build time: DATA_SIZE=128M make images
-readonly DATA_SIZE="${DATA_SIZE:-${EXFAT_SIZE:-36M}}"
+readonly DATA_SIZE="${DATA_SIZE:-36M}"
 
 readonly GENIMAGE_CFG="${BOARD_DIR}/genimage/genimage.cfg"
 readonly GENIMAGE_TMP="${BINARIES_DIR}/genimage.tmp"
@@ -83,9 +77,9 @@ build_data_image() {
     truncate -s "${DATA_SIZE}" "${DATA_IMG}"
     mkfs.fat -F 32 -I -n "SB-ENEMA" -i BEEFCAFE "${DATA_IMG}"
 
-    # Copy seed files (DB, DBX, KEK, PK, README.txt, certs, logs, …) to root.
+    # Copy seed files (README.txt, and any other data-seed entries) to root.
     local item
-    for item in "${EXFAT_SEED}"/*; do
+    for item in "${DATA_SEED_DIR}"/*; do
         [[ -e "${item}" ]] || continue  # skip if glob matched nothing
         mcopy -i "${DATA_IMG}" -s "${item}" ::
     done

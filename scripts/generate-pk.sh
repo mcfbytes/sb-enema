@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
+# generate-pk.sh — Pre-seed custom PK and KEK certificates into the data partition
+# build tree so they are baked into the image before flashing.
+#
+# Generated files land in data-seed/sb-enema/keys/, which is the same path the
+# runtime keygen_generate_keys() function uses (${DATA_MOUNT}/sb-enema/keys/).
+# At build time these files are mcopy-ed onto the FAT32 data partition image.
+#
+# WARNING: Embedding private keys in a build artifact means they will be readable
+# by anyone with access to the .img file or the USB stick.  Only use this script
+# in a trusted build environment.  For most use cases, let sb-enema generate keys
+# at runtime on first boot instead.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SEED_BASE="${SEED_BASE:-${ROOT_DIR}/buildroot-config/board/sb-enema/exfat-seed}"
+KEYS_OUT="${KEYS_OUT:-${ROOT_DIR}/sb_enema/board/sb-enema/data-seed/sb-enema/keys}"
 
 generate_cert() {
     local subject="$1"
@@ -26,5 +37,5 @@ generate_cert() {
         -out "${crt}"
 }
 
-generate_cert "/CN=SB-ENEMA PK" "${SEED_BASE}/PK" "PK"
-generate_cert "/CN=SB-ENEMA KEK" "${SEED_BASE}/KEK" "KEK"
+generate_cert "/CN=SB-ENEMA PK" "${KEYS_OUT}" "PK"
+generate_cert "/CN=SB-ENEMA KEK" "${KEYS_OUT}" "KEK"

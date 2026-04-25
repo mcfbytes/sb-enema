@@ -3,20 +3,18 @@
 ## Flow Diagram (text)
 
 - Microsoft PK Recovery path  
-  `third_party/secureboot_objects` → `scripts/prepare-secureboot-objects.sh` (venv + `secure_boot_default_keys.py`) → `output/secureboot-staging/secureboot_artifacts/Firmware/{PK,KEK,DB,DBX}.bin` and `sb-enema/payloads/microsoft/{PK,KEK,db,dbx}.auth` → `post-image.sh` rsyncs staging onto FAT32 data partition → runtime paths `/mnt/data/secureboot_artifacts/*` and `/mnt/data/sb-enema/payloads/microsoft/*.auth` → `msft_enroll` stages certs from `/mnt/data/PreSignedObjects` into `/mnt/data/sb-enema/payloads/{PK,KEK,db}` for preview → `efi-updatevar` writes db → dbx → KEK → PK.
+  `third_party/secureboot_objects` → `scripts/prepare-secureboot-objects.sh` (venv + `secure_boot_default_keys.py`) → `output/secureboot-staging/secureboot_artifacts/Firmware/{PK,KEK,DB,DBX}.bin` and `sb-enema/payloads/microsoft/{PK,KEK,db,dbx}.auth` → `post-image.sh` copies staging onto FAT32 data partition → runtime paths `/mnt/data/sb-enema/payloads/microsoft/*.auth` → `handle_microsoft_colonic()` calls `stage_microsoft_pk()` + `stage_microsoft_kek_db_dbx()` which stage certs from `/mnt/data/PreSignedObjects` into `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}/` for preview → `enroll()` calls `efi-updatevar` writing db → dbx → KEK → PK.
 - Custom Owner path  
-  User runs `sb-enema` → `custom_generate_keys` writes `/mnt/data/sb-enema/keys/{PK,KEK}.{key,crt}` and copies PK cert to `/mnt/data/PK/PK.crt` → `custom_create_payloads` uses efitools to build `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.auth`; db uses certs from `/mnt/data/PreSignedObjects/DB/Certificates`, dbx pulls `/mnt/data/secureboot_artifacts/Firmware/dbx.bin` (fallback `/mnt/data/PreSignedObjects/DBX/DBX.bin`) → preview/update delta → `efi-updatevar` writes db → dbx → KEK → PK.
+  User runs `sb-enema` → `handle_full_colonic()` calls `keygen_generate_keys()` which writes `/mnt/data/sb-enema/keys/{PK,KEK}.{key,crt}` → `stage_user_pk_kek()` + `stage_microsoft_kek_db_dbx()` + `stage_sign_db()` build `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.auth`; db uses certs from `/mnt/data/PreSignedObjects/DB/Certificates`, dbx pulls `/mnt/data/secureboot_artifacts/Firmware/DBX.bin` via `_find_dbx_binary()` (fallback `/mnt/data/PreSignedObjects/DBX/DBX.bin`, then `/mnt/data/sb-enema/payloads/microsoft/dbx.auth`) → `enroll()` previews delta and calls `efi-updatevar` writing db → dbx → KEK → PK.
 - Common assets  
-  Templates/scripts from `secureboot_objects` land at `/mnt/data/PreSignedObjects`, `/mnt/data/Templates`, `/mnt/data/scripts` for transparency/debugging; FAT32 seed adds `/PK`, `/KEK`, `/DB`, `/DBX`, `/logs` placeholders.
+  Source certificates from `secureboot_objects` land at `/mnt/data/PreSignedObjects` on the data partition. The `data-seed/` tree seeds `README.txt` only; runtime directories (`sb-enema/payloads/`, `sb-enema/keys/`, `sb-enema/logs/`) are created on first use.
 
 ## Issues Table
 
 | Severity | Stage | File(s) | Issue | Suggested Fix |
 | --- | --- | --- | --- | --- |
-| High | Runtime bootstrap | sb_enema/board/sb-enema/rootfs-overlay/etc/init.d/S40sb-enema | Init script called non-existent `/usr/sbin/sb-enema-provision.sh`, so the main tool never launched. | Start `/usr/sbin/sb-enema` instead. (Fixed) |
 | Medium | CLI helper | scripts/provision.sh | Helper script pointed at removed `buildroot-config/.../sb-enema-provision.sh`, so local invocation failed. | Point to current `sb_enema/board/sb-enema/rootfs-overlay/usr/sbin/sb-enema`. (Fixed) |
 | Medium | Build tooling | sb_enema/board/sb-enema/post-image.sh | Requires host `mkfs.fat` (dosfstools) to format the FAT32 data partition; build will stop if host lacks it. | Install `dosfstools` on host. |
-| Low | Mountpoint leftovers | sb_enema/board/sb-enema/post-build.sh | Creates `/mnt/sb-enema` in target rootfs, but runtime uses `/mnt/data`. Harmless but unused. | Aligned to `/mnt/data`; `/mnt/sb-enema` no longer created. (Fixed) |
 
 ## Dependency Verification
 
@@ -39,11 +37,13 @@
 | Path | Produced by | Consumed by | Notes |
 | --- | --- | --- | --- |
 | `/mnt/data` | post-image label `SB-ENEMA` + mount.sh | All runtime scripts | post-build.sh pre-creates `/mnt/data` in target rootfs. |
-| `/mnt/data/sb-enema/payloads/microsoft/*.auth` | prepare-secureboot-objects → post-image | `msft_enroll` | Staged from secureboot_artifacts/Firmware `*.bin`. |
-| `/mnt/data/PreSignedObjects` | prepare-secureboot-objects → post-image | `_msft_stage_target_certs`, `_custom_stage_target_certs`, dbx fallback | Holds Microsoft certs/templates/scripts. |
-| `/mnt/data/secureboot_artifacts/Firmware/dbx.bin` | prepare-secureboot-objects → post-image | `_custom_build_dbx_payload` | Primary dbx ESL source; fallback to PreSignedObjects/DBX/DBX.bin. |
-| `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.*` | Microsoft staging or `custom_create_payloads` | `update_compute`, `preview`, `efi-updatevar` | PAYLOAD_DIR in update.sh. |
-| `/mnt/data/sb-enema/logs` | log_init (mkdir) | log.sh | Seed tree only provides `/logs`; runtime uses `/sb-enema/logs`. |
+| `/mnt/data/sb-enema/payloads/microsoft/*.auth` | prepare-secureboot-objects → post-image | `stage_microsoft_pk()`, `stage_microsoft_kek_db_dbx()` | Staged from secureboot_artifacts/Firmware `*.bin`. |
+| `/mnt/data/PreSignedObjects` | prepare-secureboot-objects → post-image | `stage_microsoft_kek_db_dbx()`, `stage_user_kek_db()`, `_find_dbx_binary()` | Holds Microsoft source certificates. |
+| `/mnt/data/secureboot_artifacts/Firmware/DBX.bin` | prepare-secureboot-objects → post-image | `_find_dbx_binary()` in `stage.sh` | Primary dbx ESL source; fallback to PreSignedObjects/DBX/DBX.bin then microsoft/dbx.auth. |
+| `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.*` | `stage_*` functions or `stage_sign_*()`  | `update_compute()`, `preview_display()`, `enroll()` | PAYLOAD_DIR in common.sh; cleared by `stage_clear()`. |
+| `/mnt/data/sb-enema/keys/{PK,KEK}.{key,crt}` | `keygen_generate_keys()` | `stage_user_pk_kek()`, `stage_sign_kek()`, `stage_sign_db()`, `_stage_build_dbx_payload()` | Created on first Full Colonic run; skipped if files already exist. |
+| `/mnt/data/sb-enema/kek_update_map.json` | prepare-secureboot-objects (copies from `PostSignedObjects/KEK/`) | `_is_in_kek_update_map()` in `stage.sh` | Required for vendor cert filtering in `stage_bios_entries()`; warning emitted and step skipped if absent. |
+| `/mnt/data/sb-enema/logs` | `log_init()` (mkdir on first run) | `log.sh` | Runtime creates this directory; no seed placeholder needed. |
 
 ## Overall Assessment
 
