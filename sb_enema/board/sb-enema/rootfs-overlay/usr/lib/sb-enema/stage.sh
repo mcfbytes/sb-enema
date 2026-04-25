@@ -58,7 +58,7 @@ KEK_UPDATE_MAP="${DATA_MOUNT}/sb-enema/kek_update_map.json"
 #   the same rules.  Calls die() on any violation.
 # ---------------------------------------------------------------------------
 _stage_assert_payload_dir_safe() {
-    _safe_rm_dir_assert "${PAYLOAD_DIR:-}" "PAYLOAD_DIR" "/mnt/" "/tmp/" >/dev/null
+    _safe_rm_dir_assert "${PAYLOAD_DIR:-}" "PAYLOAD_DIR" "/mnt/" "/tmp/"
 }
 
 # ---------------------------------------------------------------------------
