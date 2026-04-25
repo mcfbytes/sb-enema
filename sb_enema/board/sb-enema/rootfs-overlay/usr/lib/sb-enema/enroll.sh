@@ -118,7 +118,7 @@ _enroll_var() {
     # Use -e -f for raw EFI Signature Lists (Setup Mode only):
     #   • microsoft/KEK.auth, db.auth, dbx.auth (from Firmware/*.bin raw ESLs)
     local -a efi_args
-    if efi_is_auth_file "${auth_file}"; then
+    if efivar_is_auth_file "${auth_file}"; then
         efi_args=("-f")
     else
         efi_args=("-e" "-f")

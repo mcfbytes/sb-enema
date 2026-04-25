@@ -467,7 +467,7 @@ efivar_get_secure_boot_state() {
 }
 
 # ---------------------------------------------------------------------------
-# efi_is_auth_file <file>
+# efivar_is_auth_file <file>
 #   Returns 0 if <file> is an EFI_VARIABLE_AUTHENTICATION_2 signed auth file;
 #   returns 1 if it is a raw EFI Signature List (no auth header).
 #
@@ -480,7 +480,7 @@ efivar_get_secure_boot_state() {
 #   efi-updatevar) will report any real I/O error.  dd stderr is suppressed
 #   to avoid spurious log noise.
 # ---------------------------------------------------------------------------
-efi_is_auth_file() {
+efivar_is_auth_file() {
     local file="$1"
     local fsize
     fsize=$(wc -c < "${file}" 2>/dev/null || echo 0)

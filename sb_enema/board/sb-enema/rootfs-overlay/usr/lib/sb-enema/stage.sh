@@ -282,7 +282,7 @@ stage_microsoft_pk() {
 
     if [[ ! -f "${PAYLOAD_DIR}/PK.auth" ]]; then
         local src="${MSFT_PAYLOADS_SUBDIR}/PK.auth"
-        if efi_is_auth_file "${src}"; then
+        if efivar_is_auth_file "${src}"; then
             cp "${src}" "${PAYLOAD_DIR}/PK.auth"
         else
             log_info "microsoft/PK.auth is a raw ESL (pre-Imaging build); wrapping with time-based auth header"
@@ -563,7 +563,7 @@ _dbx_esl_from_auth_or_raw() {
     local src="$1"
     local out="$2"
 
-    if efi_is_auth_file "${src}"; then
+    if efivar_is_auth_file "${src}"; then
         # Auth file: read WIN_CERTIFICATE.dwLength (uint32 LE) at offset 16
         local len_bytes win_cert_len esl_offset
         len_bytes=$(dd if="${src}" bs=1 skip=16 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
