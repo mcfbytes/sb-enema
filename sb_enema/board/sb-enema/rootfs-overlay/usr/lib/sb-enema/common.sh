@@ -254,8 +254,12 @@ _path_has_dot_segments() {
 #   one of the allowed prefixes.
 # ---------------------------------------------------------------------------
 _safe_rm_dir_assert() {
-    local path="$1"
-    local label="$2"
+    if [[ $# -lt 2 ]]; then
+        die "_safe_rm_dir_assert requires at least 2 arguments: <path> <label> [allowed_prefix ...]"
+    fi
+
+    local path="${1:-}"
+    local label="${2:-}"
     shift 2 || true
 
     local -a prefixes
@@ -302,10 +306,16 @@ _safe_rm_dir_assert() {
         if [[ -L "${path}" ]]; then
             die "${label} ('${path}') is a symlink; refusing to run rm -rf"
         fi
+        if [[ ! -d "${path}" ]]; then
+            die "${label} ('${path}') is not a directory; refusing to run rm -rf"
+        fi
 
         local resolved
         resolved="$(readlink -f -- "${path}")" \
             || die "Failed to canonicalize ${label} ('${path}'); refusing to run rm -rf"
+        if [[ ! -d "${resolved}" ]]; then
+            die "Resolved ${label} ('${resolved}') is not a directory; refusing to run rm -rf"
+        fi
 
         for p in "${prefixes[@]}"; do
             local root="${p%/}"
