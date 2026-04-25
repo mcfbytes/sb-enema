@@ -33,6 +33,37 @@ OWNER_GUID=""
 CERT_CN_PREFIX="${CERT_CN_PREFIX:-Custom}"
 
 # ---------------------------------------------------------------------------
+# Canonical 8-4-4-4-12 hex UUID format, used by both keygen_is_valid_guid
+# and keygen_assert_valid_guid as the single source of truth.
+# ---------------------------------------------------------------------------
+readonly _KEYGEN_GUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+# ---------------------------------------------------------------------------
+# keygen_is_valid_guid <guid>
+#   Predicate: returns 0 if <guid> matches the canonical UUID format, else 1.
+#   Tolerates a missing argument under `set -u` by defaulting to "".
+# ---------------------------------------------------------------------------
+keygen_is_valid_guid() {
+    local guid="${1-}"
+    [[ "${guid}" =~ ${_KEYGEN_GUID_REGEX} ]]
+}
+
+# ---------------------------------------------------------------------------
+# keygen_assert_valid_guid <guid>
+#   Validate that <guid> matches the canonical 8-4-4-4-12 hex UUID format.
+#   Calls die() with a clear message on mismatch (including the missing-
+#   argument case).  Intended as a defence-in-depth check at every site that
+#   consumes OWNER_GUID before handing it to cert-to-efi-sig-list /
+#   sign-efi-sig-list, which would otherwise produce malformed ESLs or fail
+#   with opaque errors.
+# ---------------------------------------------------------------------------
+keygen_assert_valid_guid() {
+    local guid="${1-}"
+    keygen_is_valid_guid "${guid}" \
+        || die "Owner GUID '${guid}' is not a valid UUID (expected 8-4-4-4-12 hex format)"
+}
+
+# ---------------------------------------------------------------------------
 # keygen_load_or_generate_guid() — Load the owner GUID from the FAT volume
 #   or generate a new one randomly and persist it.
 #   Prints the GUID to stdout; callers should capture via $().
@@ -43,7 +74,7 @@ keygen_load_or_generate_guid() {
 
     if [[ -f "${guid_file}" ]]; then
         guid=$(tr -d '[:space:]' < "${guid_file}")
-        if [[ "${guid}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+        if keygen_is_valid_guid "${guid}"; then
             log_info "Loaded owner GUID from ${guid_file}: ${guid}" >&2
             printf '%s' "${guid}"
             return 0
