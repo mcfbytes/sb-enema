@@ -100,7 +100,7 @@ require_setup_mode() {
 #   This is the single canonical normalization used for fingerprint
 #   comparison across the codebase; previously the pipeline
 #     sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]'
-#   was duplicated (with minor variants) at five-plus call sites.
+#   was duplicated (with minor variants) at many call sites.
 #
 #   Input may be:
 #     * the full openssl line, e.g. "SHA256 Fingerprint=AA:BB:..."
