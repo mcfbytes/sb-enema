@@ -30,6 +30,13 @@ VERSION="@@VERSION@@"
 [[ "${VERSION}" == "@@VERSION@@" ]] && VERSION="manual-build"
 
 # ---------------------------------------------------------------------------
+# Highest numeric option in the interactive menu.  Update this constant when
+# adding or removing menu items so the prompt and error message stay in sync
+# automatically.
+# ---------------------------------------------------------------------------
+MENU_MAX_OPTION=16
+
+# ---------------------------------------------------------------------------
 # print_banner() — display the project name and version.
 # ---------------------------------------------------------------------------
 print_banner() {
@@ -92,10 +99,10 @@ show_menu() {
     echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
     echo "  [13] Set certificate CN (name prefix)"
     echo "  [14] Restore OEM Defaults — BIOS instructions"
-    echo "  [15] Exit"
+    echo "  [15] Scan bootloader CA certificates"
+    echo "  [16] Exit"
     echo
     echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
-    echo "  [B]  Scan bootloader CA certificates"
     echo
 }
 
@@ -401,7 +408,7 @@ run_menu_loop() {
         show_menu
 
         local choice
-        read -rp "Enter your choice [1-15 or B]: " choice
+        read -rp "Enter your choice [1-${MENU_MAX_OPTION}]: " choice
 
         case "${choice}" in
             1)  handle_option_1 ;;
@@ -418,10 +425,10 @@ run_menu_loop() {
             12) handle_apply ;;
             13) handle_set_cert_cn ;;
             14) handle_option_14 ;;
-            15) handle_option_15 ;;
-            [Bb]) handle_scan_bootloaders ;;
+            15) handle_scan_bootloaders ;;
+            16) handle_option_15 ;;
             *)
-                echo -e "${RED}Invalid choice. Please enter a number between 1 and 15 or B.${RESET}"
+                echo -e "${RED}Invalid choice. Please enter a number between 1 and ${MENU_MAX_OPTION}.${RESET}"
                 log_warn "Invalid menu selection: ${choice}"
                 ;;
         esac

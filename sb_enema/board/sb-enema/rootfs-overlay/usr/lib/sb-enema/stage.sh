@@ -819,10 +819,10 @@ _stage_dbx_apply_pca2011_gate() {
 #   Emit a prominent console warning that DBX2024 was not applied.
 # ---------------------------------------------------------------------------
 _stage_warn_dbx2024_not_applied() {
-    echo -e "${YELLOW}⚠  DBX2024 (PCA 2011 CA revocation) was NOT applied.${RESET}"
-    echo -e "${YELLOW}   Update Windows via Windows Update (KB5062710 or later) and re-run${RESET}"
-    echo -e "${YELLOW}   SB-ENEMA after the new Windows UEFI CA 2023-signed bootloader is${RESET}"
-    echo -e "${YELLOW}   installed to apply the PCA 2011 CA revocation safely.${RESET}"
+    log_warn "DBX2024 (PCA 2011 CA revocation) was NOT applied."
+    log_warn "Update Windows via Windows Update (KB5062710 or later) and re-run"
+    log_warn "SB-ENEMA after the new Windows UEFI CA 2023-signed bootloader is"
+    log_warn "installed to apply the PCA 2011 CA revocation safely."
 }
 
 # ---------------------------------------------------------------------------
@@ -916,13 +916,11 @@ stage_advise_pca2011_for_pre_signed() {
             log_info "No PCA 2011-signed bootloaders detected; the pre-signed Microsoft dbx (including DBX2024) is safe to enroll."
             ;;
         PCA2011_IN_USE)
-            echo
-            echo -e "${YELLOW}⚠  WARNING: An installed bootloader is still signed by Microsoft Windows${RESET}"
-            echo -e "${YELLOW}    Production PCA 2011.  The pre-signed Microsoft dbx includes DBX2024,${RESET}"
-            echo -e "${YELLOW}    which will revoke PCA 2011 — bricking that bootloader on next boot.${RESET}"
-            echo -e "${YELLOW}    Use the user-keyed Full Colonic path (which can exclude DBX2024)${RESET}"
-            echo -e "${YELLOW}    or update Windows (KB5062710 or later) before applying.${RESET}"
-            echo
+            log_warn "An installed bootloader is still signed by Microsoft Windows"
+            log_warn "Production PCA 2011.  The pre-signed Microsoft dbx includes DBX2024,"
+            log_warn "which will revoke PCA 2011 — bricking that bootloader on next boot."
+            log_warn "Use the user-keyed Full Colonic path (which can exclude DBX2024)"
+            log_warn "or update Windows (KB5062710 or later) before applying."
             log_warn "PCA 2011 in use; pre-signed Microsoft dbx will revoke it on enrollment."
             ;;
         *)
