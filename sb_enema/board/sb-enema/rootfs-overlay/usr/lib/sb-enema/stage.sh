@@ -391,8 +391,7 @@ _stage_cert_fp() {
             # substitution will fail and we return success with empty output.
             set +e +o pipefail
             openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//;s/://g' \
-                | tr '[:upper:]' '[:lower:]'
+                | _fp_normalize
         )
     )"; then
         return 0
@@ -984,7 +983,7 @@ stage_bios_entries() {
             # Compute SHA-1 fingerprint — used to look up certs in kek_update_map.json
             local sha1_hex
             sha1_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha1 2>/dev/null \
-                       | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                       | _fp_normalize) || {
                 log_warn "Could not compute SHA-1 for ${varname}-${idx}.der; skipping"
                 idx=$((idx + 1))
                 continue
@@ -993,7 +992,7 @@ stage_bios_entries() {
             # Compute SHA-256 fingerprint — used for test-cert and Microsoft-cert checks
             local sha256_hex
             sha256_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
-                         | sed 's/.*Fingerprint=//;s/://g' | tr '[:upper:]' '[:lower:]') || {
+                         | _fp_normalize) || {
                 log_warn "Could not compute SHA-256 for ${varname}-${idx}.der; skipping"
                 idx=$((idx + 1))
                 continue

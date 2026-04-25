@@ -65,8 +65,7 @@ safety_check_setup_mode() {
                 local fp
                 fp=$(openssl x509 -in "${tmpdir}/PK-0.der" -inform DER -noout \
                         -fingerprint -sha256 2>/dev/null \
-                        | sed 's/.*Fingerprint=//;s/://g' \
-                        | tr '[:upper:]' '[:lower:]') || fp=""
+                        | _fp_normalize) || fp=""
                 if [[ -n "${fp}" ]]; then
                     local ownership
                     ownership=$(certdb_identify_ownership_model "${fp}")
@@ -255,7 +254,7 @@ safety_verify_write() {
     local fp
     while IFS= read -r fp; do
         [[ -n "${fp}" ]] || continue
-        expected_normalized+=("$(printf '%s' "${fp}" | tr -d ':' | tr '[:upper:]' '[:lower:]')")
+        expected_normalized+=("$(_fp_normalize "${fp}")")
     done <<< "${expected_fps_raw}"
 
     if [[ ${#expected_normalized[@]} -eq 0 ]]; then
@@ -295,8 +294,7 @@ safety_verify_write() {
         log_info "  Checking cert ${idx}: openssl x509 -in ${varname}-${idx}.der -inform DER -noout -fingerprint -sha256"
         actual_fp=$(openssl x509 -in "${tmpdir}/${varname}-${idx}.der" -inform DER -noout \
                 -fingerprint -sha256 2>/dev/null \
-                | sed 's/.*Fingerprint=//;s/://g' \
-                | tr '[:upper:]' '[:lower:]') || actual_fp=""
+                | _fp_normalize) || actual_fp=""
         log_info "  Cert ${idx} fingerprint: ${actual_fp}"
         actual_fps+=("${actual_fp}")
         local efp

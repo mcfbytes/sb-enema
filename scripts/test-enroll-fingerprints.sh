@@ -157,7 +157,7 @@ rc=0
 out=$(_enroll_staged_fingerprints "PK" 2>/dev/null) || rc=$?
 [[ "${rc}" -eq 0 ]] && pass "exit 0 when at least one cert parses" \
     || fail "expected exit 0 for good cert, got ${rc}"
-expected_fp=$(openssl x509 -in "${TMP_PEM}" -noout -fingerprint -sha256 | sed 's/.*Fingerprint=//')
+expected_fp=$(openssl x509 -in "${TMP_PEM}" -noout -fingerprint -sha256 | _fp_normalize)
 if grep -qxF "${expected_fp}" <<<"${out}"; then
     pass "expected fingerprint emitted for parseable cert"
 else
