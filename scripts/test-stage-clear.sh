@@ -129,7 +129,7 @@ echo "--- Test 5: /mnt/data/... PAYLOAD_DIR → guard must accept ---"
 echo "--- Test 6: stage_clear() removes non-microsoft, preserves microsoft/ ---"
 
 STAGE_DIR="$(mktemp -d -t sb-enema-stage-XXXXXX)"
-trap 'rm -rf "${STAGE_DIR}"' RETURN 2>/dev/null || true
+trap '[[ -n "${STAGE_DIR:-}" && "${STAGE_DIR}" == /tmp/* ]] && rm -rf "${STAGE_DIR}"' EXIT
 
 mkdir -p "${STAGE_DIR}/microsoft"
 touch "${STAGE_DIR}/microsoft/PK.auth"
@@ -152,7 +152,7 @@ if stage_clear 2>/dev/null; then
 else
     fail "stage_clear() failed unexpectedly for a valid /tmp/... PAYLOAD_DIR"
 fi
-rm -rf "${STAGE_DIR}"
+[[ -n "${STAGE_DIR:-}" && "${STAGE_DIR}" == /tmp/* ]] && rm -rf "${STAGE_DIR}"
 
 # ---------------------------------------------------------------------------
 # Test 7: stage_clear() on a non-existent PAYLOAD_DIR creates the directory
@@ -160,7 +160,7 @@ rm -rf "${STAGE_DIR}"
 echo "--- Test 7: stage_clear() creates PAYLOAD_DIR if absent ---"
 
 NEW_DIR="$(mktemp -d -t sb-enema-newdir-XXXXXX)"
-rm -rf "${NEW_DIR}"   # ensure it does not exist yet
+[[ -n "${NEW_DIR:-}" && "${NEW_DIR}" == /tmp/* ]] && rm -rf "${NEW_DIR}"   # ensure it does not exist yet
 
 PAYLOAD_DIR="${NEW_DIR}"
 if stage_clear 2>/dev/null; then
@@ -172,7 +172,7 @@ if stage_clear 2>/dev/null; then
 else
     fail "stage_clear() failed unexpectedly when PAYLOAD_DIR did not exist"
 fi
-rm -rf "${NEW_DIR}"
+[[ -n "${NEW_DIR:-}" && "${NEW_DIR}" == /tmp/* ]] && rm -rf "${NEW_DIR}"
 
 # ---------------------------------------------------------------------------
 # Summary
