@@ -290,9 +290,7 @@ echo "--- Test 7: malformed list_size (overflow) handled gracefully ---"
 # header_size(0) + sig_size(0) = 28 bytes header, then 2 bytes of padding.
 _make_esl "${WORK_DIR}/bad.in.esl" \
     "raw:92a4d23bc0967940b420fcf98ef103edffff0000000000000000000000000000"
-# Run with a generous timeout so an infinite loop would be detected by CI.
-if timeout 10 bash -c '_stage_filter_x509_sha256_lists_from_esl "$1" "$2"' \
-        _ "${WORK_DIR}/bad.in.esl" "${WORK_DIR}/bad.out.esl" 2>/dev/null; then
+if _run_filter "${WORK_DIR}/bad.in.esl" "${WORK_DIR}/bad.out.esl" 2>/dev/null; then
     in_size="$(wc -c < "${WORK_DIR}/bad.in.esl")"
     out_size="$(wc -c < "${WORK_DIR}/bad.out.esl")"
     if [[ "${in_size}" == "${out_size}" ]]; then
@@ -301,7 +299,7 @@ if timeout 10 bash -c '_stage_filter_x509_sha256_lists_from_esl "$1" "$2"' \
         fail "malformed list_size mishandled (in=${in_size}, out=${out_size})"
     fi
 else
-    fail "filter failed or timed out on malformed list_size input"
+    fail "filter failed on malformed list_size input"
 fi
 
 # ---------------------------------------------------------------------------
