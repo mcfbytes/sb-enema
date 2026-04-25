@@ -31,7 +31,15 @@ source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/keygen.sh"
 #   2011 cert for preview).  Returning all fingerprints lets the caller pass
 #   the full set to safety_verify_write, which succeeds when ANY enrolled cert
 #   matches ANY expected fingerprint.
-#   Returns 1 (empty output) if no certs are available.
+#
+#   Exit codes:
+#     0 — at least one staged cert was parsed; fingerprints printed on stdout.
+#     1 — no candidate cert files were found (directory missing or empty).
+#         Callers may treat this as "skip verification with a warning".
+#     2 — candidate cert files were present but ALL failed to parse.  Callers
+#         MUST treat this as a hard failure: enrollment cannot be verified
+#         and continuing would silently skip cryptographic confirmation that
+#         the correct key was written.
 # ---------------------------------------------------------------------------
 _enroll_staged_fingerprints() {
     local varname="$1"
@@ -43,9 +51,10 @@ _enroll_staged_fingerprints() {
     _old_nullglob=$(shopt -p nullglob) || true
     shopt -s nullglob
 
-    local cert_file found=0
+    local cert_file candidates=0 found=0
     for cert_file in "${staged_dir}"/*.der "${staged_dir}"/*.crt "${staged_dir}"/*.cer; do
         [[ -f "${cert_file}" ]] || continue
+        candidates=$((candidates + 1))
         local fp
         fp=$(openssl x509 -in "${cert_file}" -inform DER -noout -fingerprint -sha256 2>/dev/null \
                 | sed 's/.*Fingerprint=//') \
@@ -60,7 +69,17 @@ _enroll_staged_fingerprints() {
     # early from inside the loop, so cleanup is always reached.
 
     eval "${_old_nullglob}"
-    [[ "${found}" -eq 1 ]]
+
+    if [[ "${found}" -eq 1 ]]; then
+        return 0
+    fi
+    # Distinguish "no cert files found" (warn and skip) from "cert files
+    # present but all failed to parse" (hard failure -- otherwise post-write
+    # verification would be silently skipped).
+    if [[ "${candidates}" -gt 0 ]]; then
+        return 2
+    fi
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -240,9 +259,39 @@ enroll_apply() {
     # microsoft/ KEK ESL holds only the 2023 cert; the staged dir also has
     # the 2011 cert for preview).  Passing all staged fingerprints ensures
     # verification passes when ANY enrolled cert matches ANY staged cert.
-    local pk_fps kek_fps
-    pk_fps=$(_enroll_staged_fingerprints "PK") || pk_fps=""
-    kek_fps=$(_enroll_staged_fingerprints "KEK") || kek_fps=""
+    #
+    # Exit codes from _enroll_staged_fingerprints:
+    #   0 — fingerprints captured.
+    #   1 — no staged cert files found; warn and skip post-write verification.
+    #   2 — staged cert files present but ALL failed to parse; this is a hard
+    #       failure because continuing would silently skip cryptographic
+    #       confirmation that the correct key was written.
+    local pk_fps kek_fps rc
+    pk_fps=$(_enroll_staged_fingerprints "PK") || rc=$?
+    if [[ "${rc:-0}" -eq 2 ]]; then
+        log_action "ENROLL" "PK" "FAIL" "staged certificate files present but none could be parsed"
+        log_error "Staged PK certificate files exist but all failed to parse"
+        log_error "Refusing to enroll PK without post-write verification"
+        echo -e "${RED}ENROLLMENT ABORTED${RESET}"
+        echo -e "${RED}  Staged PK certificate files are present but unreadable${RESET}"
+        echo -e "${RED}  (corrupt DER, wrong encoding, or wrong file extension).${RESET}"
+        echo -e "${RED}  Re-stage PK with valid certificates before enrolling.${RESET}"
+        return 1
+    fi
+    rc=0
+    kek_fps=$(_enroll_staged_fingerprints "KEK") || rc=$?
+    if [[ "${rc:-0}" -eq 2 ]]; then
+        log_action "ENROLL" "KEK" "FAIL" "staged certificate files present but none could be parsed"
+        log_error "Staged KEK certificate files exist but all failed to parse"
+        log_error "Refusing to enroll KEK without post-write verification"
+        echo -e "${RED}ENROLLMENT ABORTED${RESET}"
+        echo -e "${RED}  Staged KEK certificate files are present but unreadable${RESET}"
+        echo -e "${RED}  (corrupt DER, wrong encoding, or wrong file extension).${RESET}"
+        echo -e "${RED}  Re-stage KEK with valid certificates before enrolling.${RESET}"
+        return 1
+    fi
+    pk_fps="${pk_fps:-}"
+    kek_fps="${kek_fps:-}"
 
     [[ -z "${pk_fps}" ]]  && log_warn "No staged PK certificate found; PK post-write verification will be skipped"
     [[ -z "${kek_fps}" ]] && log_warn "No staged KEK certificate found; KEK post-write verification will be skipped"
