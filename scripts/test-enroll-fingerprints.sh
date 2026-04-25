@@ -24,11 +24,22 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export SB_ENEMA_LIB_DIR="${REPO_ROOT}/sb_enema/board/sb-enema/rootfs-overlay/usr/lib/sb-enema"
 export CERTDB_DIR="${SB_ENEMA_LIB_DIR}/known-certs"
 
-MOCK_EFIVARS="$(mktemp -d)"
-MOCK_DATA="$(mktemp -d)"
-MOCK_PAYLOADS="$(mktemp -d)"
-MOCK_KEYS="$(mktemp -d)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}"' EXIT
+# Track every temp path in a single array and use one cleanup function so
+# items can't accidentally be dropped from cleanup (and so a partial setup
+# failure still removes whatever was created so far).
+TMP_PATHS=()
+cleanup() {
+    local p
+    for p in "${TMP_PATHS[@]:-}"; do
+        [[ -n "${p}" ]] && rm -rf "${p}"
+    done
+}
+trap cleanup EXIT
+
+MOCK_EFIVARS="$(mktemp -d)";  TMP_PATHS+=("${MOCK_EFIVARS}")
+MOCK_DATA="$(mktemp -d)";     TMP_PATHS+=("${MOCK_DATA}")
+MOCK_PAYLOADS="$(mktemp -d)"; TMP_PATHS+=("${MOCK_PAYLOADS}")
+MOCK_KEYS="$(mktemp -d)";     TMP_PATHS+=("${MOCK_KEYS}")
 
 export EFIVARS_DIR="${MOCK_EFIVARS}"
 export DATA_MOUNT="${MOCK_DATA}"
@@ -133,9 +144,8 @@ mkdir -p "${PAYLOAD_DIR}/PK"
 
 # Generate a self-signed cert in DER form.  Uses RSA-2048 + SHA-256 to keep
 # the test cheap; the cert is purely synthetic and never trusted.
-TMP_KEY="$(mktemp)"
-TMP_PEM="$(mktemp)"
-trap 'rm -rf "${MOCK_EFIVARS}" "${MOCK_DATA}" "${MOCK_PAYLOADS}" "${MOCK_KEYS}" "${TMP_KEY}" "${TMP_PEM}"' EXIT
+TMP_KEY="$(mktemp)"; TMP_PATHS+=("${TMP_KEY}")
+TMP_PEM="$(mktemp)"; TMP_PATHS+=("${TMP_PEM}")
 openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
     -keyout "${TMP_KEY}" -out "${TMP_PEM}" \
     -subj "/CN=sb-enema-test" -days 1 >/dev/null 2>&1
