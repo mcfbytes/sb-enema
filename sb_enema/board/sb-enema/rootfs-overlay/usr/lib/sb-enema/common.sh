@@ -136,9 +136,11 @@ efivar_is_auth_file() {
     [[ "${hdr:16:32}" == "9dd2af4adf68ee498aa9347d375665a7" ]] || return 1
     # dwLength (uint32 LE at bytes 16..19): must cover at least the
     # WIN_CERTIFICATE_UEFI_GUID header (24 bytes) and not exceed file size - 16.
+    # hdr offsets 0..7 are the four little-endian bytes of dwLength (b0,b1,b2,b3);
+    # reconstruct via shifts to keep the byte-order intent explicit.
     local dwlen
-    dwlen=$(( 16#${hdr:6:2} * 16777216 + 16#${hdr:4:2} * 65536 + \
-              16#${hdr:2:2} * 256     + 16#${hdr:0:2} ))
+    dwlen=$(( (16#${hdr:6:2} << 24) | (16#${hdr:4:2} << 16) | \
+              (16#${hdr:2:2} <<  8) |  16#${hdr:0:2} ))
     (( dwlen >= 24 )) || return 1
     (( 16 + dwlen <= fsize )) || return 1
     return 0

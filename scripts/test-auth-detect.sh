@@ -139,7 +139,7 @@ dd if=/dev/zero of="${WORK}/short39.bin" bs=1 count=39 2>/dev/null
 printf '\xf1\x0e' | dd of="${WORK}/short39.bin" bs=1 seek=22 count=2 conv=notrunc 2>/dev/null
 assert_not_auth "39-byte file with only the wCertificateType marker" "${WORK}/short39.bin"
 
-# Helper: build a valid 40-byte EFI_VARIABLE_AUTHENTICATION_2 header.
+# Helper: build a synthetic EFI_VARIABLE_AUTHENTICATION_2 header.
 # Args: out_file, dwlength_value, revision_le_hex (4 chars), certtype_le_hex
 #       (4 chars), guid_le_hex (32 chars), tail_size
 build_auth_header() {
@@ -152,13 +152,11 @@ build_auth_header() {
     b1=$(printf '%02x' $(( (dwlen >>  8) & 0xff )))
     b2=$(printf '%02x' $(( (dwlen >> 16) & 0xff )))
     b3=$(printf '%02x' $(( (dwlen >> 24) & 0xff )))
-    # Concatenate hex string and emit raw bytes via printf '\xNN'
+    # Append the 24-byte WIN_CERTIFICATE_UEFI_GUID header by feeding the hex
+    # string through xxd -r -p (raw hex decode); avoids brittle printf '\xNN'
+    # escaping.
     local hex="${b0}${b1}${b2}${b3}${rev}${ctype}${guid}"
-    local i byte
-    for (( i = 0; i < ${#hex}; i += 2 )); do
-        byte="${hex:i:2}"
-        printf '\\x%s' "${byte}"
-    done | xargs -0 printf >> "${out}"
+    printf '%s' "${hex}" | xxd -r -p >> "${out}"
     if (( tail > 0 )); then
         dd if=/dev/zero bs=1 count="${tail}" 2>/dev/null >> "${out}"
     fi
