@@ -7,13 +7,16 @@ on:
 
 permissions:
   actions: read
-  contents: write
-  security-events: write
-  id-token: write
+  contents: read
 
 jobs:
   scan:
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+      security-events: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
