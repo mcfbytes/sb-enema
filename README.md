@@ -1,5 +1,10 @@
 # SB-ENEMA 💊
 
+[![build](https://github.com/mcfbytes/sb-enema/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mcfbytes/sb-enema/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/mcfbytes/sb-enema/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/mcfbytes/sb-enema/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mcfbytes/sb-enema/badge)](https://scorecard.dev/viewer/?uri=github.com/mcfbytes/sb-enema)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **S**ecure **B**oot **E**mergency **N**uclear-option for **E**xasperated **M**otherboard **A**dministrators
 
 Because sometimes your UEFI needs a deep cleaning. ¯\\\_(ツ)\_/¯
