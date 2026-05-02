@@ -109,16 +109,25 @@ jobs:
           output-file: "${{ github.workspace }}/sbom/sbom.spdx.json"
 
       - name: Attest build provenance
-        uses: actions/attest@v4
+        id: attest
+        uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/sb-enema.img
+            dist/sb-enema.zip
+            dist/SHA256SUMS
+            sbom/sbom.spdx.json
+
+      - name: Stage attestation bundle for release
+        run: |
+          cp "${{ steps.attest.outputs.bundle-path }}" \
+             dist/sb-enema.intoto.jsonl
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/sb-enema.zip
+            dist/sb-enema.intoto.jsonl
             dist/README.md
             dist/SHA256SUMS
             sbom/sbom.spdx.json
