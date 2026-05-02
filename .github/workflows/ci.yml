@@ -19,8 +19,13 @@ jobs:
   build-image:
     runs-on: ubuntu-24.04
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
 
@@ -33,7 +38,7 @@ jobs:
             pkg-config libffi-dev mtools
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.14"
 
@@ -41,20 +46,20 @@ jobs:
         run: echo "BUILDROOT_VERSION=$(grep '^BUILDROOT_VERSION' Makefile | cut -d= -f2 | xargs)" >> $GITHUB_ENV
 
       - name: Cache Buildroot tarball
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: output/buildroot-*.tar.gz
           key: br-tarball-${{ env.BUILDROOT_VERSION }}
 
       - name: Cache Buildroot DL dir
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: output/dl
           key: br-dl-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig') }}
           restore-keys: br-dl-${{ env.BUILDROOT_VERSION }}-
 
       - name: Cache Buildroot host toolchain
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             output/br-out/host
@@ -65,7 +70,7 @@ jobs:
             br-host-${{ runner.os }}-
 
       - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
         with:
           max-size: 4G
 
@@ -74,7 +79,7 @@ jobs:
           make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sb-enema-image
           path: output/br-out/images/sb-enema.img
