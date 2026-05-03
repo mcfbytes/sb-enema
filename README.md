@@ -1,5 +1,6 @@
 # SB-ENEMA 💊
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/f06f66e77e7540f8a2384427a30e61a1)](https://app.codacy.com/gh/mcfbytes/sb-enema?utm_source=github.com&utm_medium=referral&utm_content=mcfbytes/sb-enema&utm_campaign=Badge_Grade)
 [![build](https://github.com/mcfbytes/sb-enema/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mcfbytes/sb-enema/actions/workflows/ci.yml)
 [![Codacy](https://github.com/mcfbytes/sb-enema/actions/workflows/codacy.yml/badge.svg?branch=master)](https://github.com/mcfbytes/sb-enema/actions/workflows/codacy.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mcfbytes/sb-enema/badge)](https://scorecard.dev/viewer/?uri=github.com/mcfbytes/sb-enema)
