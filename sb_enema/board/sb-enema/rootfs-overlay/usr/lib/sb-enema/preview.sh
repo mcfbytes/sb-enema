@@ -85,10 +85,10 @@ _preview_display_var() {
 }
 
 # ---------------------------------------------------------------------------
-# preview_display()
-#   Render the full preview showing planned changes for all variables.
+# _preview_display_impl()
+#   Internal: write the full change preview with ANSI colours to stdout.
 # ---------------------------------------------------------------------------
-preview_display() {
+_preview_display_impl() {
     echo
     echo -e "${BOLD}══════════════════════════════════════════════════════════════${RESET}"
     echo -e "${BOLD}  What Will Change?${RESET}"
@@ -114,29 +114,36 @@ preview_display() {
 }
 
 # ---------------------------------------------------------------------------
+# preview_display()
+#   Render the full preview showing planned changes for all variables.
+#   With dialog: clear the screen and write directly to /dev/tty so that
+#   ANSI colors are preserved.  preview_confirm() follows immediately,
+#   so no extra "Press Enter" prompt is needed here.
+#   Without dialog: plain stdout.
+# ---------------------------------------------------------------------------
+preview_display() {
+    if [[ "${HAS_DIALOG:-0}" -eq 1 ]]; then
+        printf '%s' "${ANSI_CLEAR}" >/dev/tty
+        _preview_display_impl >/dev/tty
+    else
+        _preview_display_impl
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # preview_confirm()
 #   Prompt the user to confirm applying changes.
-#   Require explicit "y" or "yes"; anything else is treated as decline.
-#   Logs the user's response.
 #   Returns 0 for confirmed, 1 for declined.
 # ---------------------------------------------------------------------------
 preview_confirm() {
-    local response
-    echo -n "Apply these changes? [y/N] "
-    read -r response
-
-    log_info "User response to confirmation prompt: '${response}'"
-
-    case "${response}" in
-        y|Y|yes|YES|Yes)
-            log_info "User confirmed changes"
-            return 0
-            ;;
-        *)
-            log_info "User declined changes"
-            return 1
-            ;;
-    esac
+    log_info "Prompting user to confirm changes"
+    if ui_yesno "Apply these changes?"; then
+        log_info "User confirmed changes"
+        return 0
+    else
+        log_info "User declined changes"
+        return 1
+    fi
 }
 
 # ---------------------------------------------------------------------------
