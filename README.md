@@ -16,6 +16,35 @@ A bootable USB image that audits, repairs, and re-provisions your UEFI Secure Bo
 
 **TL;DR:** Your motherboard vendor abandoned you. This is your revenge.
 
+## Contents
+
+- [What Is This?](#what-is-this)
+- [Supported Scenarios](#supported-scenarios)
+- [Warnings and Safety Notes](#️-warnings-and-safety-notes)
+- [Secure Boot Ownership Models](#secure-boot-ownership-models)
+  - [Vendor-Owned](#vendor-owned-the-default-for-consumer-boards)
+  - [Microsoft-Owned](#microsoft-owned-surface-enterprise-whcp)
+  - [Custom-Owned](#custom-owned-enthusiasts-security-nerds)
+- [Microsoft 2026 Certificate Expiration](#microsoft-2026-certificate-expiration)
+  - [The short version](#the-short-version)
+  - ["But UEFI firmware doesn't check expiration dates!"](#but-uefi-firmware-doesnt-check-expiration-dates)
+  - [Other side-effects of letting the chain rot](#other-side-effects-of-letting-the-chain-rot)
+  - [Distributions and vendors moving to the 2023 chain](#distributions-and-vendors-moving-to-the-2023-chain)
+  - [Should you actually do anything?](#should-you-actually-do-anything)
+- [BitLocker, TPM, and Why This Matters](#bitlocker-tpm-and-why-this-matters)
+- [Recovery and Fallback Options](#recovery-and-fallback-options)
+- [1.0 Feature Set](#10-feature-set)
+- [Image Size](#image-size)
+- [Quick Start](#quick-start)
+- [Flashing](#flashing)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
 ## Supported Scenarios
 
 | Scenario | What SB-ENEMA Does |
@@ -178,6 +207,95 @@ flowchart LR
 You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your KEK so Windows, WHQL drivers, and the UEFI shim bootloader still work. This gives you deterministic control over what boots on your hardware.
 
 > **Important:** The PK private key is never stored on the target device—only in the EFI variables as a public certificate. If you generate a PK with this tool, the private key is saved to the FAT32 data partition on the USB drive. **Back it up.** If you lose it and need to modify your Secure Boot variables later, you'll need to re-enter Setup Mode and re-provision.
+
+## Microsoft 2026 Certificate Expiration
+
+This is the entire reason SB-ENEMA exists. If you take nothing else away from this README, take this section.
+
+### The short version
+
+The original Microsoft UEFI Secure Boot certificates—issued in 2011 and trusted by virtually every Secure Boot–capable PC ever shipped—begin expiring in **June 2026**. Microsoft has issued replacement certificates dated 2023, and the entire ecosystem (Microsoft, Linux distributions, OEMs, IHVs) is in the middle of a multi-year migration.
+
+The expiring 2011 certificates are:
+
+| Certificate | Variable | Role | Expires |
+|---|---|---|---|
+| Microsoft Corporation KEK CA 2011 | KEK | Authorizes db/dbx updates from Microsoft | June 2026 |
+| Microsoft Windows Production PCA 2011 | db | Signs the Windows bootloader | October 2026 |
+| Microsoft Corporation UEFI CA 2011 | db | Signs third-party bootloaders (Linux `shim`, option ROMs) | June 2026 |
+
+The replacement 2023 certificates already published by Microsoft are:
+
+| Certificate | Variable | Replaces |
+|---|---|---|
+| Microsoft Corporation KEK 2K CA 2023 | KEK | KEK CA 2011 |
+| Windows UEFI CA 2023 | db | Windows Production PCA 2011 |
+| Microsoft UEFI CA 2023 | db | UEFI CA 2011 (third-party / shim) |
+| Microsoft Option ROM UEFI CA 2023 | db | (new — dedicated CA for option ROMs) |
+
+Microsoft's authoritative references:
+
+- **Landing page:** [aka.ms/GetSecureBoot](https://aka.ms/GetSecureBoot) — central index of all Microsoft Secure Boot 2026 resources.
+- [Act now: Secure Boot certificates expire in June 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856) (Windows IT Pro Blog)
+- [Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/secure-boot-playbook-for-certificates-expiring-in-2026/4469235) (deployment playbook)
+- [Windows Server Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windowsservernewsandbestpractices/windows-server-secure-boot-playbook-for-certificates-expiring-in-2026/4495789)
+- [Windows Secure Boot certificate expiration and CA updates (KB5062710)](https://support.microsoft.com/en-us/topic/windows-secure-boot-certificate-expiration-and-ca-updates-7ff40d33-95dc-4c3c-8725-a9b95457578e) — deep dive into the mechanics
+- [Secure Boot Certificate updates: Guidance for IT professionals and organizations (KB5062713)](https://support.microsoft.com/en-us/topic/secure-boot-certificate-updates-guidance-for-it-professionals-and-organizations-e2b43f9f-b424-42df-bc6a-8476db65ab2f)
+- [When Secure Boot certificates expire on Windows devices (KB5079373)](https://support.microsoft.com/en-us/topic/when-secure-boot-certificates-expire-on-windows-devices-c83b6afd-a2b6-43c6-938e-57046c80c1c2) — end-user FAQ
+- [Refreshing the root of trust: industry collaboration on Secure Boot certificate updates](https://blogs.windows.com/windowsexperience/2026/02/10/refreshing-the-root-of-trust-industry-collaboration-on-secure-boot-certificate-updates/) (Windows Experience Blog)
+
+### "But UEFI firmware doesn't check expiration dates!"
+
+True. Mostly. And it does not save you.
+
+The UEFI specification (§32, Image Authentication) does **not** require firmware to verify the `notBefore` / `notAfter` fields of certificates in `db` or `KEK` when authenticating a PE image at boot time. In practice, every mainstream UEFI implementation—AMI Aptio, Insyde H2O, Phoenix SCT, EDK II / OVMF—ignores X.509 validity periods during boot-time signature verification. An expired CA certificate sitting in `db` will continue to validate signatures on already-signed bootloaders forever.
+
+This is the source of a popular misconception: *"the certs expire but nothing breaks, so why bother?"*
+
+What that argument misses is that boot-time PE verification is only **one** of several places certificates matter. The Secure Boot trust chain breaks in five other places long before any firmware ever attempts a date check:
+
+1. **New signatures stop chaining to a CA your firmware trusts.** The day Microsoft starts signing Windows boot components (`bootmgfw.efi`, `bootmgr.efi`, the kernel, WHQL drivers, option ROMs) exclusively with the 2023 certificates, any system whose `db` contains only the 2011 certificates has no trust path for those new binaries. Boot-time PE verification doesn't care about a CA's *date*—but it absolutely cares whether the leaf signature chains to a CA that is actually present in `db`. If the issuing CA isn't in `db`, the signature is rejected. Expiration is irrelevant; *presence* is everything.
+
+2. **`dbx` (revocation) updates stop being authenticated.** `dbx` is an authenticated EFI variable: updates must be signed by a key chaining to the **KEK**. Once Microsoft stops dual-signing `dbx` payloads with the 2011 KEK, any `dbx` update signed only with the 2023 KEK will be rejected by firmware that lacks the 2023 KEK. Your revocation list freezes in time. Every subsequent vulnerable bootloader—BlackLotus-class threats, leaked OEM keys, CVE-2023-24932 follow-ons, future shim/GRUB CVEs—remains bootable on your machine forever, even after Microsoft and the Linux distros have revoked it for everyone else.
+
+3. **Linux `shim` updates stop verifying.** The `shim` first-stage bootloader used by every Microsoft-signed Linux distribution (Ubuntu, Fedora, Debian, openSUSE, RHEL, SLES, Arch via `shim-signed`, and dozens of derivatives) is signed today by the **Microsoft Corporation UEFI CA 2011**, and going forward by the **Microsoft UEFI CA 2023**. Once distributions ship shims signed *only* by the 2023 CA, those shims will fail Secure Boot verification on firmware that doesn't trust the 2023 CA. Your Linux installer USB will refuse to boot. Your existing Linux install will refuse to boot after a routine `shim` package update.
+
+4. **Option ROM verification fails on new hardware.** New GPUs, NICs, NVMe controllers, RAID HBAs, and other add-in cards ship with option ROMs signed under the new **Microsoft Option ROM UEFI CA 2023**. On a machine with only 2011 certificates in `db`, those option ROMs fail Secure Boot verification. Depending on firmware policy this either silently disables the device, drops to a verification-failure prompt, or—on poorly implemented firmware—hangs the boot.
+
+5. **Windows feature updates and servicing.** Microsoft has stated that Windows updates will, at points during the rollout, refuse to install on systems that have not received the 2023 certificates in `db`/`KEK`. Even before any hard cutoff, individual cumulative updates that replace `bootmgr` with a 2023-signed version can brick the system on next boot if the firmware can't validate the new signature.
+
+So: yes, your existing Windows install keeps booting. For now. Right up until the first Patch Tuesday that ships a 2023-signed `bootmgr` and your firmware shrugs at it.
+
+### Other side-effects of letting the chain rot
+
+- **No protection from newly-discovered vulnerable bootloaders.** Without authenticated `dbx` updates, every published shim/GRUB/bootloader CVE after your last `dbx` is a Secure Boot bypass on your machine. The whole point of Secure Boot is the revocation database; a frozen `dbx` is a defanged Secure Boot.
+- **Windows recovery and installation media stops working.** Microsoft Windows installation/recovery media built after the 2023 transition is signed with the 2023 chain. Boot it on a 2011-only system with Secure Boot enabled and you get `Security Violation` / `Image failed to authenticate` and the installer never starts. You either disable Secure Boot to recover (defeating the point) or you can't recover at all.
+- **WHQL driver loading at boot.** Storage and network drivers loaded during the early UEFI/boot phase that are WHQL-signed under the 2023 chain will fail to load—potentially leaving the system unable to see its own boot disk.
+- **BitLocker recovery, repeatedly.** Firmware updates that retroactively add the 2023 certs (the path most OEMs are taking) change PCR 7 and trigger BitLocker recovery prompts. Doing the migration deliberately, once, on your terms, is strictly better than getting surprised by it later.
+- **Cross-signed binaries are a temporary bridge, not a fix.** Microsoft is currently dual-signing some artifacts (signed by both 2011 and 2023 CAs). This is a transition aid only. Once dual-signing ends, single-signed 2023 artifacts will not verify against a 2011-only `db`.
+- **Loss of Measured Boot / attestation integrity.** Remote attestation services (Azure Attestation, Intune compliance, enterprise NAC) increasingly require evidence that the device is on the 2023 trust chain. Stale firmware fails attestation policies even when the box still boots locally.
+
+### Distributions and vendors moving to the 2023 chain
+
+This is a snapshot of the public migration state at the time of writing. It changes constantly; treat this as "these projects have publicly committed and started shipping," not as a complete or current list.
+
+- **Microsoft Windows 11 24H2 and later** — ships the 2023 CAs to firmware via Windows Update, gated and rolled out in waves. Opt-in on managed devices via the `MicrosoftUpdateManagedOptIn` registry value documented in KB5062713.
+- **Windows Server 2025** — covered by the dedicated Windows Server Secure Boot playbook; same 2023 chain.
+- **Fedora** — Fedora 42+ ships `shim` signed by Microsoft UEFI CA 2023; the Fedora `shim-review` requests have been updated and merged.
+- **Ubuntu** — Canonical has published 2023-CA signed shims for 24.04 LTS and later, documented in their Secure Boot policy updates.
+- **Debian** — Debian 13 ("trixie") ships a 2023-CA signed shim alongside the 2011-signed one during the transition.
+- **openSUSE / SUSE Linux Enterprise** — SLES 15 SP6, Leap 15.6, and Tumbleweed have shipped shims signed under the 2023 chain.
+- **Red Hat Enterprise Linux** — RHEL 9.5+ and RHEL 10 ship 2023-CA signed shims.
+- **Arch Linux** (via `shim-signed`) — tracks upstream shim builds dual-signed under the new chain.
+- **Major OEMs** — Dell, HP, Lenovo, ASUS, MSI, Gigabyte, ASRock, Supermicro, and Framework have all published firmware updates that add the 2023 KEK and db entries to their default key databases (`KEKDefault` / `dbDefault`). Whether you have actually *received* one of those updates is a separate question, which is the entire premise of this tool.
+
+### Should you actually do anything?
+
+If your machine boots Windows or Linux from a 2011-signed bootloader today, and you never install OS updates, never plug in new hardware, never expect to apply a `dbx` revocation again, and never need to boot recovery media—then technically nothing breaks the moment June 2026 rolls around. Your existing signed binaries continue to verify against your existing (now-expired) CAs in `db`, because firmware doesn't enforce expiration dates. The "expiration is symbolic" crowd is, in that narrow sense, correct.
+
+For everyone else—anyone who runs Windows Update, anyone who upgrades their Linux distribution, anyone who buys a new GPU or NVMe drive, anyone who relies on `dbx` for actual protection against bootkits, anyone who needs working recovery media—the 2023 certificates need to be present in your firmware **before** the 2011 ones become operationally useless. Either your motherboard vendor ships a firmware update that does it for you, or you do it yourself.
+
+That is what SB-ENEMA is for.
 
 ## BitLocker, TPM, and Why This Matters
 
