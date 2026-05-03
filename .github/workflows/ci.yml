@@ -1,10 +1,34 @@
 name: build
 
 on:
+  # Only rebuild the image when files that actually affect the Buildroot
+  # output change. Skipping the build for changes that don't impact the
+  # image (workflow/CI metadata, documentation, and the sb-enema runtime
+  # shell code installed via the rootfs overlay) keeps PR feedback fast,
+  # since a full image build can take ~15 minutes on GitHub runners.
+  # Fast security scans (codacy, scorecard, dependency-review, lint) run
+  # in their own workflows and are intentionally not gated by these
+  # filters, so security coverage is unchanged.
   pull_request:
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'sb_enema/board/sb-enema/rootfs-overlay/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'SecureBootChecker.ps1'
+      - '.gitignore'
   push:
     branches:
       - master
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'sb_enema/board/sb-enema/rootfs-overlay/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'SecureBootChecker.ps1'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
