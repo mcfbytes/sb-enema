@@ -20,6 +20,7 @@ source "${LIB_DIR}/update.sh"
 source "${LIB_DIR}/preview.sh"
 source "${LIB_DIR}/keygen.sh"
 source "${LIB_DIR}/stage.sh"
+source "${LIB_DIR}/bootloader-scan.sh"
 source "${LIB_DIR}/enroll.sh"
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,13 @@ source "${LIB_DIR}/enroll.sh"
 # ---------------------------------------------------------------------------
 VERSION="@@VERSION@@"
 [[ "${VERSION}" == "@@VERSION@@" ]] && VERSION="manual-build"
+
+# ---------------------------------------------------------------------------
+# Highest numeric option in the interactive menu.  Update this constant when
+# adding or removing menu items so the prompt and error message stay in sync
+# automatically.
+# ---------------------------------------------------------------------------
+MENU_MAX_OPTION=16
 
 # ---------------------------------------------------------------------------
 # print_banner() — display the project name and version.
@@ -91,7 +99,10 @@ show_menu() {
     echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
     echo "  [13] Set certificate CN (name prefix)"
     echo "  [14] Restore OEM Defaults — BIOS instructions"
-    echo "  [15] Exit"
+    echo "  [15] Scan bootloader CA certificates"
+    echo "  [16] Exit"
+    echo
+    echo -e "${BOLD}  ═══════════════════════════════════════════════${RESET}"
     echo
 }
 
@@ -177,6 +188,12 @@ handle_microsoft_suppository() {
     stage_clear || { log_error "Failed to clear staging area"; return 1; }
 
     stage_microsoft_kek_db_dbx || { log_error "Failed to stage Microsoft KEK/DB/DBX"; return 1; }
+
+    # The pre-signed Microsoft dbx.auth cannot be re-signed without user keys,
+    # so DBX2024 cannot be filtered on this path.  Run an informational scan
+    # and warn loudly if PCA 2011 is still in use; the operator should use
+    # the user-keyed Full Colonic path or update Windows first.
+    stage_advise_pca2011_for_pre_signed || true
 
     enroll || { log_error "Microsoft Suppository enrollment failed"; return 1; }
 
@@ -371,6 +388,19 @@ handle_option_15() {
 }
 
 # ---------------------------------------------------------------------------
+# handle_scan_bootloaders() — Scan bootloader CA certificates
+# [B]
+# ---------------------------------------------------------------------------
+handle_scan_bootloaders() {
+    log_info "Menu selection: Scan bootloader CA certificates"
+    echo
+    echo -e "${BOLD}Scanning EFI bootloader CA certificates…${RESET}"
+    echo
+    bootloader_scan_pca2011_in_use || true
+    bootloader_scan_log_summary
+}
+
+# ---------------------------------------------------------------------------
 # run_menu_loop() — Main interactive menu loop
 # ---------------------------------------------------------------------------
 run_menu_loop() {
@@ -378,7 +408,7 @@ run_menu_loop() {
         show_menu
 
         local choice
-        read -rp "Enter your choice [1-15]: " choice
+        read -rp "Enter your choice [1-${MENU_MAX_OPTION}]: " choice
 
         case "${choice}" in
             1)  handle_option_1 ;;
@@ -395,9 +425,10 @@ run_menu_loop() {
             12) handle_apply ;;
             13) handle_set_cert_cn ;;
             14) handle_option_14 ;;
-            15) handle_option_15 ;;
+            15) handle_scan_bootloaders ;;
+            16) handle_option_15 ;;
             *)
-                echo -e "${RED}Invalid choice. Please enter a number between 1 and 15.${RESET}"
+                echo -e "${RED}Invalid choice. Please enter a number between 1 and ${MENU_MAX_OPTION}.${RESET}"
                 log_warn "Invalid menu selection: ${choice}"
                 ;;
         esac
@@ -450,6 +481,9 @@ run_cli_mode() {
         restore-instructions)
             handle_option_14
             ;;
+        scan-bootloaders)
+            handle_scan_bootloaders
+            ;;
         *)
             echo -e "${RED}Error: Unknown CLI operation '${operation}'${RESET}" >&2
             echo >&2
@@ -469,6 +503,7 @@ run_cli_mode() {
             echo "  clear-staging           Clear staging area" >&2
             echo "  apply                   Apply staged changes" >&2
             echo "  restore-instructions    Show BIOS factory reset instructions" >&2
+            echo "  scan-bootloaders        Scan EFI bootloader CA certificates" >&2
             echo >&2
             echo "If no operation is specified, the interactive menu is shown." >&2
             exit 1

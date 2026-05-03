@@ -23,9 +23,20 @@ BR2_PACKAGE_LIBOPENSSL_BIN=y
 BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_AGETTY=y
 BR2_PACKAGE_UTIL_LINUX_LIBUUID=y
+# lsblk is required by the EFI bootloader CA scanner (bootloader-scan.sh)
+# to enumerate internal disks and locate EFI System Partitions.
+BR2_PACKAGE_UTIL_LINUX_LSBLK=y
 BR2_PACKAGE_GNU_EFI=y
 BR2_PACKAGE_EFITOOLS=y
 BR2_PACKAGE_SBSIGNTOOLS=y
+# osslsigncode is the preferred Authenticode signing-chain extractor used by
+# bootloader-scan.sh; without it the scanner falls back to less reliable
+# sbverify issuer-name matching.
+BR2_PACKAGE_OSSLSIGNCODE=y
+# python3 is used by stage.sh to filter EFI Signature Lists in the dbx ESL
+# (DBX2024 CA-revocation gating); without it the filter is skipped and
+# DBX2024 cannot be conditionally excluded.
+BR2_PACKAGE_PYTHON3=y
 BR2_PACKAGE_JQ=y
 
 # Kernel configuration

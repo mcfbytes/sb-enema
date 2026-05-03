@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+# bootloader-scan.sh — Scan EFI bootloader chains to determine whether
+# Microsoft Windows Production PCA 2011 is still actively used to sign
+# any EFI binary.  Used to gate DBX2024 PCA 2011 CA revocation staging.
+set -euo pipefail
+[[ -n "${_SB_ENEMA_BOOTLOADER_SCAN_SH:-}" ]] && return 0
+readonly _SB_ENEMA_BOOTLOADER_SCAN_SH=1
+
+# shellcheck source=common.sh
+source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/common.sh"
+# shellcheck source=log.sh
+source "${SB_ENEMA_LIB_DIR:-/usr/lib/sb-enema}/log.sh"
+
+# Microsoft cert fingerprints (SB_MS_*_FP) come from common.sh — single source
+# of truth shared with audit.sh and stage.sh.
+
+# Exported verdict variable — set by bootloader_scan_pca2011_in_use().
+# shellcheck disable=SC2034  # consumed by callers via export
+BSCAN_VERDICT=""
+
+# ---------------------------------------------------------------------------
+# _bscan_list_internal_disks()
+#   Print a newline-separated list of /dev/<name> paths for every non-removable
+#   disk found by lsblk.
+# ---------------------------------------------------------------------------
+_bscan_list_internal_disks() {
+    local name type removable
+
+    while IFS=" " read -r name type; do
+        [[ "${type}" == "disk" ]] || continue
+        removable=""
+        removable=$(cat "/sys/block/${name}/removable" 2>/dev/null) || removable="1"
+        [[ "${removable}" == "1" ]] && continue
+        echo "/dev/${name}"
+    done < <(lsblk -dno NAME,TYPE 2>/dev/null)
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_find_esp_partitions [<disk>]
+#   Print a newline-separated list of block device paths for all EFI System
+#   Partitions.  If <disk> is given only that disk is searched; otherwise all
+#   internal disks are searched.
+# ---------------------------------------------------------------------------
+_bscan_find_esp_partitions() {
+    local disk="${1:-}"
+    local -a disks=()
+
+    if [[ -n "${disk}" ]]; then
+        disks=("${disk}")
+    else
+        while IFS= read -r d; do
+            [[ -n "${d}" ]] && disks+=("${d}")
+        done < <(_bscan_list_internal_disks)
+    fi
+
+    local d name parttype
+    for d in "${disks[@]}"; do
+        while IFS=" " read -r name parttype; do
+            # Case-insensitive match on the ESP GUID
+            if [[ "${parttype,,}" == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ]]; then
+                echo "/dev/${name}"
+            fi
+        done < <(lsblk -lno NAME,PARTTYPE "${d}" 2>/dev/null)
+    done
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_mount_esp <dev> <mountpoint>
+#   Mount an EFI System Partition read-only.  Returns 1 on failure.
+#
+#   Uses `-t auto` so kernels without vfat (or with the ESP formatted as
+#   exfat on some Apple/UEFI configurations) still succeed.  Real ESPs are
+#   filtered upstream by partition type GUID, so auto-detection is safe.
+# ---------------------------------------------------------------------------
+_bscan_mount_esp() {
+    local dev="$1"
+    local mp="$2"
+
+    log_info "Mounting ESP ${dev} at ${mp} (read-only)"
+    if ! mount -t auto -o ro "${dev}" "${mp}" 2>/dev/null; then
+        log_warn "Failed to mount ESP ${dev} at ${mp}"
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_umount_esp <mountpoint>
+#   Unmount an ESP if (and only if) it is currently a mountpoint.  Best-effort
+#   — never fails.  Using mountpoint(1) avoids swallowing the unrelated
+#   "umount: not mounted" stderr that complicates failure diagnosis.
+# ---------------------------------------------------------------------------
+_bscan_umount_esp() {
+    local mp="$1"
+    if command -v mountpoint >/dev/null 2>&1; then
+        mountpoint -q "${mp}" || return 0
+    fi
+    umount "${mp}" 2>/dev/null || log_warn "umount ${mp} failed (continuing)"
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_windows_efi_binaries <esp_mount>
+#   Print a newline-separated list of Windows EFI binary paths found on the
+#   mounted ESP.  Only ESP-resident binaries are checked; Windows/System32
+#   files (winload.efi, hvloader.efi) are not Secure Boot variable signers
+#   and are intentionally excluded.
+# ---------------------------------------------------------------------------
+_bscan_windows_efi_binaries() {
+    local esp_mount="$1"
+
+    local f
+    for f in \
+        "${esp_mount}/EFI/Microsoft/Boot/bootmgfw.efi" \
+        "${esp_mount}/EFI/Microsoft/Boot/bootmgr.efi" \
+        "${esp_mount}/EFI/Microsoft/Boot/memtest.efi"; do
+        [[ -f "${f}" ]] && echo "${f}"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_linux_efi_binaries <esp_mount>
+#   Print a newline-separated list of bootloader EFI binaries that are not
+#   under EFI/Microsoft/ — i.e. SHIM/Linux loaders plus the UEFI-spec-mandated
+#   removable-media fallback (EFI/BOOT/BOOTX64.EFI and friends).  The fallback
+#   is the most common location to find a PCA 2011-signed loader on Windows
+#   installs and recovery media, so excluding it would produce a false CLEAR
+#   verdict.
+# ---------------------------------------------------------------------------
+_bscan_linux_efi_binaries() {
+    local esp_mount="$1"
+    local efi_root="${esp_mount}/EFI"
+
+    [[ -d "${efi_root}" ]] || return 0
+
+    local f
+    while IFS= read -r f; do
+        # Microsoft/ is already covered by _bscan_windows_efi_binaries and any
+        # match here would be a duplicate.
+        [[ "${f}" == *"/EFI/Microsoft/"* ]] && continue
+
+        local base
+        base=$(basename "${f}")
+
+        # Always include EFI/BOOT/* binaries (UEFI removable-media fallback).
+        if [[ "${f}" == *"/EFI/BOOT/"* ]] || [[ "${f}" == *"/EFI/boot/"* ]]; then
+            echo "${f}"
+            continue
+        fi
+
+        # Otherwise include only recognisable bootloader filenames.
+        case "${base,,}" in
+            *shim* | *grub* | *grubx64* | *grubaa64* | *grubarm* | \
+            *elilo* | *fwupd* | *fwupdx64*)
+                echo "${f}" ;;
+        esac
+    done < <(find "${efi_root}" \( -name "*.efi" -o -name "*.EFI" \) 2>/dev/null)
+}
+
+# ---------------------------------------------------------------------------
+# _bscan_extract_signing_ca_fps <efi_binary>
+#   Extract the SHA-256 fingerprints of every certificate (signer leaf and
+#   intermediate/root CAs) embedded in the Authenticode signing chain of
+#   <efi_binary>.  Prints one fingerprint per line.
+#
+#   Filtering to issuer-only would require reliably parsing each cert's
+#   Issuer DN against the chain — needlessly fragile when the caller (the
+#   PCA 2011 detection loop) only does an equality test against a known
+#   set of CA fingerprints.  Including the leaf signer is harmless: leaf
+#   fingerprints differ from CA fingerprints, so they never match.
+#
+#   Preferred path: osslsigncode (BR2_PACKAGE_OSSLSIGNCODE=y enables this)
+#   Fallback path:  sbverify --list (issuer name matching; less reliable)
+#
+#   Returns 1 if extraction fails; never calls die().
+# ---------------------------------------------------------------------------
+_bscan_extract_signing_ca_fps() {
+    local efi_binary="$1"
+
+    [[ -f "${efi_binary}" ]] || return 1
+
+    local tmpdir
+    tmpdir=$(mktemp -d) || return 1
+    # shellcheck disable=SC2064
+    trap "rm -rf '${tmpdir}'" RETURN
+
+    # --- Preferred path: osslsigncode ---
+    if command -v osslsigncode >/dev/null 2>&1; then
+        if ! osslsigncode extract-signature \
+                -in "${efi_binary}" \
+                -out "${tmpdir}/sig.p7" >/dev/null 2>&1; then
+            return 1
+        fi
+
+        if ! openssl pkcs7 -inform DER \
+                -in "${tmpdir}/sig.p7" \
+                -print_certs \
+                -out "${tmpdir}/chain.pem" 2>/dev/null; then
+            return 1
+        fi
+
+        [[ -s "${tmpdir}/chain.pem" ]] || return 1
+
+        # Split chain.pem into individual certificates and fingerprint each
+        local idx=0
+        local cert_pem="${tmpdir}/cert-${idx}.pem"
+        local in_cert=0
+        local line
+
+        while IFS= read -r line; do
+            if [[ "${line}" == "-----BEGIN CERTIFICATE-----" ]]; then
+                in_cert=1
+                cert_pem="${tmpdir}/cert-${idx}.pem"
+                printf '%s\n' "${line}" > "${cert_pem}"
+            elif [[ "${line}" == "-----END CERTIFICATE-----" ]]; then
+                printf '%s\n' "${line}" >> "${cert_pem}"
+                in_cert=0
+                local fp
+                fp=$(openssl x509 -in "${cert_pem}" -outform DER 2>/dev/null \
+                    | sha256sum 2>/dev/null | awk '{print $1}') || true
+                [[ -n "${fp}" ]] && echo "${fp}"
+                idx=$(( idx + 1 ))
+            elif [[ "${in_cert}" -eq 1 ]]; then
+                printf '%s\n' "${line}" >> "${cert_pem}"
+            fi
+        done < "${tmpdir}/chain.pem"
+
+        return 0
+    fi
+
+    # --- Fallback path: sbverify --list (issuer name matching) ---
+    if command -v sbverify >/dev/null 2>&1; then
+        log_warn "osslsigncode not available; using sbverify issuer-name matching for ${efi_binary} (less reliable than fingerprint matching)"
+
+        local issuer
+        while IFS= read -r issuer; do
+            # Map well-known issuer CNs to their canonical fingerprints so
+            # callers can still do fingerprint comparisons even on this path.
+            case "${issuer}" in
+                *"Windows Production PCA 2011"*)
+                    echo "${SB_MS_WIN_PCA_2011_FP}" ;;
+                *"Windows UEFI CA 2023"*)
+                    echo "${SB_MS_WIN_UEFI_CA_2023_FP}" ;;
+            esac
+            # Anchor the match to the start of the line (after optional
+            # leading whitespace) so a "subject name:" line that contains
+            # the substring "issuer" in a CN is not misclassified.
+        done < <(sbverify --list "${efi_binary}" 2>/dev/null \
+                     | grep -i '^[[:space:]]*issuer' \
+                     | awk -F: '{print $2}')
+
+        return 0
+    fi
+
+    # No extraction tool available
+    log_warn "Neither osslsigncode nor sbverify found; cannot extract signing certificates from ${efi_binary}"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# bootloader_scan_pca2011_in_use()
+#   Primary public API.
+#
+#   Returns:
+#     0  and exports BSCAN_VERDICT="CLEAR"         — no PCA 2011 signers found
+#     1  and exports BSCAN_VERDICT="PCA2011_IN_USE" — PCA 2011 in use
+#     1  and exports BSCAN_VERDICT="SCAN_FAILED"   — scan error / no binaries
+# ---------------------------------------------------------------------------
+bootloader_scan_pca2011_in_use() {
+    local tmpdir
+    tmpdir=$(mktemp -d) || { BSCAN_VERDICT="SCAN_FAILED"; export BSCAN_VERDICT; return 1; }
+    # shellcheck disable=SC2064
+    trap "rm -rf '${tmpdir}'" RETURN
+
+    local pca2011_found=0
+    local scanned=0
+
+    local -a esp_list=()
+    while IFS= read -r esp; do
+        [[ -n "${esp}" ]] && esp_list+=("${esp}")
+    done < <(_bscan_find_esp_partitions || true)
+
+    if [[ ${#esp_list[@]} -eq 0 ]]; then
+        log_warn "No EFI System Partitions found on internal disks"
+        BSCAN_VERDICT="SCAN_FAILED"
+        export BSCAN_VERDICT
+        return 1
+    fi
+
+    local esp esp_mp
+    # Track sha256 content hashes of binaries already scanned so the same file
+    # (e.g. EFI/BOOT/BOOTX64.EFI as a byte-identical copy of bootmgfw.efi) is
+    # not double-counted across scans on the same or different ESPs.
+    local -A seen_hashes=()
+
+    for esp in "${esp_list[@]}"; do
+        esp_mp="${tmpdir}/esp-$(basename "${esp}")"
+        mkdir -p "${esp_mp}"
+
+        if ! _bscan_mount_esp "${esp}" "${esp_mp}"; then
+            log_warn "Skipping ESP ${esp} — could not mount"
+            continue
+        fi
+
+        local -a binaries=()
+        while IFS= read -r b; do
+            [[ -n "${b}" ]] && binaries+=("${b}")
+        done < <(
+            _bscan_windows_efi_binaries "${esp_mp}" 2>/dev/null || true
+            _bscan_linux_efi_binaries   "${esp_mp}" 2>/dev/null || true
+        )
+
+        # Extraction must run while the ESP is still mounted; only umount
+        # after all binaries on this ESP have been processed.
+        local binary fp
+        for binary in "${binaries[@]}"; do
+            [[ -f "${binary}" ]] || continue
+
+            local content_hash
+            content_hash=$(sha256sum "${binary}" 2>/dev/null | awk '{print $1}') || content_hash=""
+            if [[ -n "${content_hash}" ]] && [[ -n "${seen_hashes[${content_hash}]:-}" ]]; then
+                # Byte-identical to a previously scanned file (typically
+                # EFI/BOOT/BOOTX64.EFI being a copy of bootmgfw.efi).
+                continue
+            fi
+            [[ -n "${content_hash}" ]] && seen_hashes["${content_hash}"]=1
+
+            local fps
+            fps=$(_bscan_extract_signing_ca_fps "${binary}" 2>/dev/null) || {
+                log_warn "Failed to extract signing CAs from ${binary}; skipping"
+                continue
+            }
+
+            scanned=$(( scanned + 1 ))
+
+            while IFS= read -r fp; do
+                [[ -n "${fp}" ]] || continue
+                if [[ "${fp}" == "${SB_MS_WIN_PCA_2011_FP}" ]]; then
+                    log_warn "PCA 2011 signer found in: ${binary}"
+                    pca2011_found=1
+                fi
+            done <<< "${fps}"
+        done
+
+        _bscan_umount_esp "${esp_mp}"
+    done
+
+    if [[ "${pca2011_found}" -eq 1 ]]; then
+        BSCAN_VERDICT="PCA2011_IN_USE"
+        export BSCAN_VERDICT
+        return 1
+    fi
+
+    if [[ "${scanned}" -eq 0 ]]; then
+        BSCAN_VERDICT="SCAN_FAILED"
+        export BSCAN_VERDICT
+        return 1
+    fi
+
+    BSCAN_VERDICT="CLEAR"
+    export BSCAN_VERDICT
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# bootloader_scan_log_summary()
+#   Print a human-readable summary of the last scan result.
+# ---------------------------------------------------------------------------
+bootloader_scan_log_summary() {
+    case "${BSCAN_VERDICT:-}" in
+        CLEAR)
+            log_success "✔ Bootloader scan complete — no PCA 2011 signers detected. DBX2024 CA revocation may be applied safely."
+            ;;
+        PCA2011_IN_USE)
+            log_warn "⚠ One or more bootloaders are still signed by Microsoft Windows Production PCA 2011. DBX2024 CA revocation will NOT be applied — update Windows (KB5062710 or later) first."
+            ;;
+        *)
+            log_warn "⚠ Bootloader scan failed or found no scannable EFI binaries. DBX2024 CA revocation will NOT be applied (fail-safe)."
+            ;;
+    esac
+}

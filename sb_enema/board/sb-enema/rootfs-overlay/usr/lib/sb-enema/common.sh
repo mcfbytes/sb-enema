@@ -115,6 +115,31 @@ readonly EFI_SIGNATURE_LIST_HEADER_SIZE=28
 readonly EFI_SIGNATURE_OWNER_GUID_SIZE=16
 
 # ---------------------------------------------------------------------------
+# Microsoft certificate SHA-256 fingerprints (lowercase hex, no colons).
+#
+# Single source of truth — sourced by audit.sh, bootloader-scan.sh, and
+# stage.sh.  Do not redefine these in module-private constants; previous
+# duplicate definitions had to be "kept in sync" by comment, which silently
+# diverged in practice.
+# ---------------------------------------------------------------------------
+
+# Microsoft Corporation KEK CA 2011 (legacy KEK, expiring 2026).
+readonly SB_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
+
+# Microsoft Corporation KEK CA 2023 (replacement KEK).
+readonly SB_MS_KEK_CA_2023_FP="3cd3f0309edae228767a976dd40d9f4affc4fbd5218f2e8cc3c9dd97e8ac6f9d"
+
+# Microsoft Windows Production PCA 2011 (legacy db CA, the one revoked by
+# DBX2024 — used by every Windows bootloader signed before KB5062710).
+readonly SB_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
+
+# Microsoft UEFI CA 2023 (replacement third-party UEFI CA).
+readonly SB_MS_UEFI_CA_2023_FP="f6124e34125bee3fe6d79a574eaa7b91c0e7bd9d929c1a321178efd611dad901"
+
+# Microsoft Windows UEFI CA 2023 (replacement Windows db CA).
+readonly SB_MS_WIN_UEFI_CA_2023_FP="076f1fea90ac29155ebf77c17682f75f1fdd1be196da302dc8461e350a9ae330"
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 LOG_BASE_DIR="${DATA_MOUNT}/sb-enema/logs"
