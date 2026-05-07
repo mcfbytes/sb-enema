@@ -125,140 +125,199 @@ Read this before doing anything. Seriously.
 
 There are three Secure Boot ownership models you'll encounter in the wild. Understanding which one your system uses—and which one you *want*—is the whole point of this tool.
 
+The diagrams below all use a shared visual language:
+
+```mermaid
+flowchart LR
+   L_OEM["OEM-supplied"]:::oem
+   L_USER["User-generated"]:::user
+   L_EXP["Microsoft 2011 cert (expiring)"]:::expiring
+   L_CUR["Microsoft 2023 cert (current)"]:::current
+   L_BAD["Revoked / blocked"]:::blocked
+
+   classDef oem      fill:#f1f5f9,stroke:#64748b,color:#0f172a
+   classDef user     fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+   classDef expiring fill:#fff4e5,stroke:#d97706,color:#7c2d12
+   classDef current  fill:#e7f8ee,stroke:#16a34a,color:#14532d
+   classDef blocked  fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+```
+
+Solid arrows from db certs to boot code mean "currently signs"; dashed arrows mean "signs today, but the signing CA expires in 2026."
+
 ### Vendor-Owned (the default for consumer boards)
 
 ```mermaid
 flowchart LR
    subgraph SB["Secure Boot Variables (Vendor-owned state)"]
-      PK["OEM Platform Key (PK)"]
+      PK_OEM["OEM Platform Key (PK)"]:::oem
 
       subgraph KEK["KEK Certificates"]
-         direction RL
-
-         KEK1[OEM KEK Cert]
-         KEK2[Microsoft Corporation KEK CA 2011]
-         KEK3[Microsoft Corporation KEK 2K CA 2023]
+         direction TB
+         KEK_OEM["OEM KEK Cert"]:::oem
+         MSKEK2011["Microsoft Corporation KEK CA 2011"]:::expiring
+         MSKEK2023["Microsoft Corporation KEK 2K CA 2023<br/>(often missing on un-updated boards)"]:::current
       end
 
       subgraph DB["DB Certificates"]
-         direction RL
-
-         DB1[OEM DB Cert]
-         DB2[Microsoft Corporation UEFI CA 2011]
-         DB4[Windows UEFI CA 2023]
-         DB5[Microsoft UEFI CA 2023]
-         DB6[Microsoft Option ROM UEFI CA 2023]
+         direction TB
+         DB_OEM["OEM DB Cert"]:::oem
+         MSWINPCA2011["Microsoft Windows Production PCA 2011"]:::expiring
+         MSUEFICA2011["Microsoft Corporation UEFI CA 2011"]:::expiring
+         MSWINUEFICA2023["Windows UEFI CA 2023<br/>(often missing on un-updated boards)"]:::current
+         MSUEFICA2023["Microsoft UEFI CA 2023<br/>(often missing on un-updated boards)"]:::current
+         MSOPROM2023["Microsoft Option ROM UEFI CA 2023<br/>(often missing on un-updated boards)"]:::current
       end
 
-      subgraph DBX["DBX Hashes"]
-         DBX1[Disallowed DBX]
+      subgraph DBX["DBX (revocation list)"]
+         DBX_LIST["Microsoft-published revocations"]
       end
    end
 
-   PK -->|authorizes| KEK
-   KEK -->|authorizes| DB
-   KEK -->|authorizes| DBX
+   PK_OEM -->|authorizes updates to| KEK
+   KEK -->|authorizes signed updates to| DB
+   KEK -->|authorizes signed updates to| DBX
 
-   subgraph BL[Bootloader]
-      OS[Windows Bootloader]
-      SHIM[MS shim Bootloader]
-      BAD[Revoked binaries]
+   subgraph BL["Bootloaders &amp; pre-OS code"]
+      BL_WIN["Windows Boot Manager (bootmgfw.efi)"]
+      BL_SHIM["Linux shim (shimx64.efi)"]
+      OPROM["PCIe Option ROMs"]
+      OEM_UTIL["OEM EFI utilities"]
    end
 
-   DB -->|signs, allows| BL
-   DBX -->|blocks| BAD
+   subgraph BLOCKED["Blocked"]
+      BAD["Revoked binaries"]:::blocked
+   end
+
+   MSWINPCA2011 -.->|"signs (CA expires Oct 2026)"| BL_WIN
+   MSWINUEFICA2023 -->|signs| BL_WIN
+   MSUEFICA2011 -.->|"signs (CA expires Jun 2026)"| BL_SHIM
+   MSUEFICA2023 -->|signs| BL_SHIM
+   MSOPROM2023 -->|signs| OPROM
+   DB_OEM -->|signs| OEM_UTIL
+   DBX_LIST -->|blocks| BAD
+
+   classDef oem      fill:#f1f5f9,stroke:#64748b,color:#0f172a
+   classDef expiring fill:#fff4e5,stroke:#d97706,color:#7c2d12
+   classDef current  fill:#e7f8ee,stroke:#16a34a,color:#14532d
+   classDef blocked  fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
 ```
 
-
-This is what ships on most consumer motherboards. The vendor controls the Platform Key. Microsoft's KEK is included so Windows and WHQL drivers work. In theory, the vendor updates db/dbx via firmware updates. In practice... well, you're here.
+This is what ships on most consumer motherboards. The vendor controls the Platform Key. Microsoft's 2011 KEK is included so Windows and WHQL drivers work. In theory, the vendor updates db/dbx (and adds the 2023 replacements) via firmware updates. In practice... well, you're here. The 2023 entries are drawn for completeness, but on a typical un-updated board they are simply absent—which is exactly what SB-ENEMA's audit flags.
 
 ### Microsoft-Owned (Surface, enterprise, WHCP)
 
 ```mermaid
 flowchart LR
    subgraph SB["Secure Boot Variables (Microsoft-owned state)"]
-      PK["Windows OEM Devices PK"]
+      PK_MS["Windows OEM Devices PK"]:::oem
 
       subgraph KEK["KEK Certificates"]
-         direction RL
-
-         KEK3[Microsoft Corporation KEK 2K CA 2023]
+         direction TB
+         MSKEK2011["Microsoft Corporation KEK CA 2011<br/>(present on legacy Surface/WHCP devices)"]:::expiring
+         MSKEK2023["Microsoft Corporation KEK 2K CA 2023"]:::current
       end
 
       subgraph DB["DB Certificates"]
-         direction RL
-
-         DB2[Microsoft Corporation UEFI CA 2011]
-         DB4[Windows UEFI CA 2023]
-         DB5[Microsoft UEFI CA 2023]
-         DB6[Microsoft Option ROM UEFI CA 2023]
+         direction TB
+         MSWINPCA2011["Microsoft Windows Production PCA 2011"]:::expiring
+         MSUEFICA2011["Microsoft Corporation UEFI CA 2011"]:::expiring
+         MSWINUEFICA2023["Windows UEFI CA 2023"]:::current
+         MSUEFICA2023["Microsoft UEFI CA 2023"]:::current
+         MSOPROM2023["Microsoft Option ROM UEFI CA 2023"]:::current
       end
 
-      subgraph DBX["DBX Hashes"]
-         DBX1[Disallowed DBX]
+      subgraph DBX["DBX (revocation list)"]
+         DBX_LIST["Microsoft-published revocations"]
       end
    end
 
-   PK -->|authorizes| KEK
-   KEK -->|authorizes| DB
-   KEK -->|authorizes| DBX
+   PK_MS -->|authorizes updates to| KEK
+   KEK -->|authorizes signed updates to| DB
+   KEK -->|authorizes signed updates to| DBX
 
-   subgraph BL[Bootloader]
-      OS[Windows Bootloader]
-      SHIM[MS shim Bootloader]
-      BAD[Revoked binaries]
+   subgraph BL["Bootloaders &amp; pre-OS code"]
+      BL_WIN["Windows Boot Manager (bootmgfw.efi)"]
+      BL_SHIM["Linux shim (shimx64.efi)"]
+      OPROM["PCIe Option ROMs"]
    end
 
-   DB -->|signs, allows| BL
-   DBX -->|blocks| BAD
+   subgraph BLOCKED["Blocked"]
+      BAD["Revoked binaries"]:::blocked
+   end
+
+   MSWINPCA2011 -.->|"signs (CA expires Oct 2026)"| BL_WIN
+   MSWINUEFICA2023 -->|signs| BL_WIN
+   MSUEFICA2011 -.->|"signs (CA expires Jun 2026)"| BL_SHIM
+   MSUEFICA2023 -->|signs| BL_SHIM
+   MSOPROM2023 -->|signs| OPROM
+   DBX_LIST -->|blocks| BAD
+
+   classDef oem      fill:#f1f5f9,stroke:#64748b,color:#0f172a
+   classDef expiring fill:#fff4e5,stroke:#d97706,color:#7c2d12
+   classDef current  fill:#e7f8ee,stroke:#16a34a,color:#14532d
+   classDef blocked  fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
 ```
 
-Used on Surface devices, Windows RT, WHCP test devices, and enterprise-managed hardware. Microsoft controls the whole chain. You probably don't have this unless you bought your machine from Microsoft or your IT department set it up.
+Used on Surface devices, Windows RT, WHCP test devices, and enterprise-managed hardware. Microsoft controls the whole chain. You probably don't have this unless you bought your machine from Microsoft or your IT department set it up. Older Surface/WHCP units may still carry the 2011 KEK alongside (or instead of) the 2023 one.
 
 ### Custom-Owned (enthusiasts, security nerds)
 
 ```mermaid
 flowchart LR
    subgraph SB["Secure Boot Variables (User-owned state)"]
-      PK["User-generated Platform Key (PK)"]
+      PK_USER["User-generated Platform Key (PK) ★"]:::user
 
       subgraph KEK["KEK Certificates"]
-         direction RL
-
-         KEK1[User-generated KEK]
-         KEK3[Microsoft Corporation KEK 2K CA 2023]
+         direction TB
+         KEK_USER["User-generated KEK ★"]:::user
+         MSKEK2023["Microsoft Corporation KEK 2K CA 2023 ◆"]:::current
       end
 
       subgraph DB["DB Certificates"]
-         direction RL
-
-         DB1[User-generated Cert]
-         DB2[Microsoft Corporation UEFI CA 2011]
-         DB4[Windows UEFI CA 2023]
-         DB5[Microsoft UEFI CA 2023]
-         DB6[Microsoft Option ROM UEFI CA 2023]
+         direction TB
+         DB_USER["User-generated DB Cert ★"]:::user
+         MSUEFICA2011["Microsoft Corporation UEFI CA 2011 ◆<br/>(transitional — CA expires Jun 2026)"]:::expiring
+         MSWINUEFICA2023["Windows UEFI CA 2023 ◆"]:::current
+         MSUEFICA2023["Microsoft UEFI CA 2023 ◆"]:::current
+         MSOPROM2023["Microsoft Option ROM UEFI CA 2023 ◆"]:::current
       end
 
-      subgraph DBX["DBX Hashes"]
-         DBX1[Disallowed DBX]
+      subgraph DBX["DBX (revocation list)"]
+         DBX_LIST["Microsoft-published revocations ◆"]
       end
    end
 
-   PK -->|authorizes| KEK
-   KEK -->|authorizes| DB
-   KEK -->|authorizes| DBX
+   PK_USER -->|authorizes updates to| KEK
+   KEK -->|authorizes signed updates to| DB
+   KEK -->|authorizes signed updates to| DBX
 
-   subgraph BL[Bootloader]
-      OS[Windows Bootloader]
-      SHIM[MS shim Bootloader]
-      BAD[Revoked binaries]
+   subgraph BL["Bootloaders &amp; pre-OS code"]
+      BL_WIN["Windows Boot Manager (bootmgfw.efi)"]
+      BL_SHIM["Linux shim (shimx64.efi)"]
+      OPROM["PCIe Option ROMs"]
+      USER_BIN["Your own signed binaries<br/>(e.g. UKI, custom shim)"]
    end
 
-   DB -->|signs, allows| BL
-   DBX -->|blocks| BAD
+   subgraph BLOCKED["Blocked"]
+      BAD["Revoked binaries"]:::blocked
+   end
+
+   MSWINUEFICA2023 -->|signs| BL_WIN
+   MSUEFICA2011 -.->|"signs currently-shipped shims (CA expires Jun 2026)"| BL_SHIM
+   MSUEFICA2023 -->|signs| BL_SHIM
+   MSOPROM2023 -->|signs| OPROM
+   DB_USER -->|signs| USER_BIN
+   DBX_LIST -->|blocks| BAD
+
+   classDef user     fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+   classDef expiring fill:#fff4e5,stroke:#d97706,color:#7c2d12
+   classDef current  fill:#e7f8ee,stroke:#16a34a,color:#14532d
+   classDef blocked  fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
 ```
 
-You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your KEK so Windows, WHQL drivers, and the UEFI shim bootloader still work. This gives you deterministic control over what boots on your hardware.
+Legend for this diagram: **★** = generated by SB-ENEMA on your USB drive · **◆** = enrolled from Microsoft-published payloads.
+
+You control the PK and KEK. Microsoft's db/dbx entries are enrolled under your KEK so Windows, WHQL drivers, and the UEFI shim bootloader still work. SB-ENEMA deliberately omits the legacy `Microsoft Corporation KEK CA 2011` and `Microsoft Windows Production PCA 2011` (Windows Boot Manager will be re-signed under `Windows UEFI CA 2023` ahead of the 2026 expiration). `Microsoft Corporation UEFI CA 2011` is retained transitionally because shims currently in distribution are still signed by it; once shims are re-signed under `Microsoft UEFI CA 2023` it can be removed. This gives you deterministic control over what boots on your hardware.
 
 > **Important:** The PK private key is never stored on the target device—only in the EFI variables as a public certificate. If you generate a PK with this tool, the private key is saved to the FAT32 data partition on the USB drive. **Back it up.** If you lose it and need to modify your Secure Boot variables later, you'll need to re-enter Setup Mode and re-provision.
 
