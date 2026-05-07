@@ -19,6 +19,11 @@ A bootable USB image that audits, repairs, and re-provisions your UEFI Secure Bo
 ## Contents
 
 - [What Is This?](#what-is-this)
+- [What Is Secure Boot?](#what-is-secure-boot)
+  - [Why It Matters](#why-it-matters)
+  - [How It Improves System Security](#how-it-improves-system-security)
+  - [What Secure Boot Protects Against](#what-secure-boot-protects-against)
+  - [What Secure Boot Does *Not* Protect Against](#what-secure-boot-does-not-protect-against)
 - [Supported Scenarios](#supported-scenarios)
 - [Warnings and Safety Notes](#️-warnings-and-safety-notes)
 - [Secure Boot Ownership Models](#secure-boot-ownership-models)
@@ -44,6 +49,55 @@ A bootable USB image that audits, repairs, and re-provisions your UEFI Secure Bo
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
+
+## What Is Secure Boot?
+
+Secure Boot is a UEFI firmware feature, defined by the UEFI specification, that cryptographically verifies every piece of code the firmware hands control to during the boot process. Before the firmware launches a bootloader (or any UEFI application or driver loaded from disk or an option ROM), it checks the binary's digital signature against a set of trusted keys and hashes stored in NVRAM:
+
+- **PK** (Platform Key) — the root of trust. Whoever owns the PK owns the platform's Secure Boot policy.
+- **KEK** (Key Exchange Keys) — keys authorized to update `db` and `dbx`.
+- **db** (Signature Database) — certificates and hashes of code that is *allowed* to run.
+- **dbx** (Forbidden Signature Database) — certificates and hashes of code that is *explicitly blocked*, even if it would otherwise be trusted.
+
+If a binary is signed by something in `db` (and not revoked by `dbx`), it runs. If not, the firmware refuses to execute it and the boot stops. This check happens before the OS kernel, before any disk encryption is unlocked, and before any user-mode code exists — so the OS itself can't be lied to about whether the chain was honored.
+
+### Why It Matters
+
+The earliest code to run on a machine has unrestricted control over everything that runs after it. A malicious bootloader or boot-stage rootkit can tamper with the kernel as it loads, hide itself from the running OS, disable security features, intercept disk encryption keys, and persist across OS reinstalls. Antivirus and EDR software running inside the OS can't reliably detect this class of attack, because by the time they start, the attacker is already underneath them.
+
+Secure Boot exists to close that gap by making the firmware itself the thing that decides whether a given bootloader is allowed to run, using cryptography rather than trust-on-first-use.
+
+### How It Improves System Security
+
+- **Establishes a root of trust in firmware.** Trust starts at the PK and flows down through KEK → db. Code that isn't signed by something in that chain doesn't get to run during boot.
+- **Blocks unsigned and unauthorized bootloaders.** Replacing the OS bootloader with a malicious one (the classic "evil maid" or bootkit attack) requires either a valid signature from a trusted key or physical access to the firmware setup to disable Secure Boot.
+- **Enables revocation.** When a signed bootloader is later found to be vulnerable (e.g. BootHole / GRUB2, BlackLotus), its hash or certificate can be added to `dbx` so firmware refuses to load it, even though it was once trusted.
+- **Anchors measured boot and disk encryption.** BitLocker (and similar full-disk encryption schemes) can bind their keys to a TPM policy that includes Secure Boot state. If Secure Boot is disabled or the keys are tampered with, the disk doesn't unlock automatically — recovery is required, which surfaces the tampering instead of silently allowing it.
+- **Raises the cost of persistence.** An attacker who compromises the OS can no longer trivially install a stealthy boot-stage payload; they need either a valid signing key, a known firmware vulnerability, or physical access.
+
+### What Secure Boot Protects Against
+
+- Unsigned or attacker-signed bootloaders being launched by the firmware.
+- Persistent **bootkits** and pre-OS rootkits that hook the boot chain to compromise the kernel.
+- Tampered or swapped EFI binaries on the ESP (EFI System Partition).
+- Loading of malicious or unsigned UEFI drivers and option ROMs from removable media or add-in cards (when the firmware enforces signature checks on them).
+- Re-introduction of **known-vulnerable** signed bootloaders that have been revoked via `dbx` updates.
+- Casual "boot a USB and own the machine" attacks against an otherwise locked-down system.
+
+### What Secure Boot Does *Not* Protect Against
+
+Secure Boot is a boot-integrity mechanism, not a general-purpose security product. In particular, it does **not** protect against:
+
+- **Attackers with physical access to firmware setup.** Anyone who can enter BIOS/UEFI setup can typically disable Secure Boot, clear keys, or enroll their own — unless a strong firmware/admin password is set (and the firmware actually honors it).
+- **Compromise of the platform owner's keys.** If the PK or a KEK private key is stolen, the attacker can sign whatever they want and the firmware will happily run it.
+- **Vulnerabilities in trusted, signed code.** A signed-but-buggy bootloader (e.g. BootHole, BlackLotus before revocation) is still trusted until its hash/cert is added to `dbx`. Secure Boot doesn't audit *what* signed code does, only *that* it's signed.
+- **Firmware-level (SMM/BIOS) implants.** Malware that lives in the SPI flash or in System Management Mode runs *before and beneath* Secure Boot's checks.
+- **Post-boot OS compromise.** Once the kernel is up, Secure Boot's job is done. Kernel exploits, malicious drivers loaded after boot, userland malware, ransomware, phishing, and credential theft are all out of scope.
+- **Supply-chain attacks on signed components.** If a legitimate vendor ships a signed binary that contains a backdoor, Secure Boot will trust it.
+- **Side-channel and hardware attacks.** DMA attacks, cold-boot attacks against RAM, TPM sniffing on the LPC/SPI bus, and similar hardware-level attacks are unaffected by Secure Boot.
+- **Configuration mistakes.** Secure Boot in "Setup Mode" with no PK enrolled, or with a weak/leaked test PK shipped by the vendor, provides little to no protection — which is one of the problems SB-ENEMA exists to detect and fix.
+
+In short: Secure Boot makes the *boot path* trustworthy. Everything before firmware (hardware, SMM, the keys themselves) and everything after the kernel hands off to userspace is still your problem.
 
 ## Supported Scenarios
 
