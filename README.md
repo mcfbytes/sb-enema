@@ -128,7 +128,7 @@ There are three Secure Boot ownership models you'll encounter in the wild. Under
 The diagrams below all use a shared visual language:
 
 ```mermaid
-flowchart LR
+flowchart
    L_OEM["OEM-supplied"]:::oem
    L_USER["User-generated"]:::user
    L_EXP["Microsoft 2011 cert (expiring)"]:::expiring
