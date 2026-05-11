@@ -144,8 +144,10 @@ handle_microsoft_colonic() {
 
     echo -e "${YELLOW}  ⚠  This will replace your vendor's Platform Key with Microsoft's.${RESET}"
     echo -e "${YELLOW}  ⚠  OEM-specific Secure Boot features may stop working.${RESET}"
-    echo -e "${YELLOW}  ⚠  Microsoft PK enrollment is untested; some firmware (e.g. QEMU/OVMF)${RESET}"
-    echo -e "${YELLOW}     may reject unsigned PK payloads even in Setup Mode.${RESET}"
+    echo -e "${DIM}  ℹ  Some firmware (recent EDK2/OVMF, a few OEMs) rejects Microsoft's${RESET}"
+    echo -e "${DIM}     pre-signed PK payload in Setup Mode.  If the first PK write fails,${RESET}"
+    echo -e "${DIM}     the tool automatically retries with a throwaway-signed wrapper${RESET}"
+    echo -e "${DIM}     (the cert that ends up in PK is unchanged).${RESET}"
     echo -e "${GREEN}  ✓  This is reversible: use your BIOS 'Restore Factory Keys' option.${RESET}"
     echo -e "${DIM}  ℹ  Trusting Redmond over your OEM — in Microsoft we trust.${RESET}"
     echo
@@ -190,8 +192,8 @@ handle_microsoft_suppository() {
 handle_stage_microsoft_pk() {
     log_info "Menu selection: Stage Microsoft PK"
     echo
-    echo -e "${YELLOW}  ⚠  Microsoft PK enrollment is untested; some firmware (e.g. QEMU/OVMF)${RESET}"
-    echo -e "${YELLOW}     may reject unsigned PK payloads even in Setup Mode.${RESET}"
+    echo -e "${DIM}  ℹ  If the first PK write is rejected by firmware, the enroll step${RESET}"
+    echo -e "${DIM}     will automatically retry with a throwaway-signed wrapper.${RESET}"
     echo
     stage_microsoft_pk || { log_error "Failed to stage Microsoft PK"; return 1; }
     stage_show
