@@ -10,7 +10,7 @@ Produce a minimal Buildroot-based USB image for reprovisioning UEFI Secure Boot 
   - `/usr/sbin/sb-enema`: interactive/CLI entrypoint that mounts, audits, previews, and enrolls.
   - `/etc/init.d/S20data-mount`: mounts the FAT32 data partition at `/mnt/data` on boot.
   - `/root/.profile`: runs `sb-enema` automatically after the auto-login on the console.
-- Kernel fragment enables EFI stub boot, EFI variable access, FAT32, loop devices, and necessary NLS support.
+- Kernel fragment enables EFI stub boot, EFI variable access, FAT32 and exFAT filesystem support, loop devices, and necessary NLS support.
 
 ## Image layout
 `sb_enema/board/sb-enema/genimage/genimage.cfg` produces a hybrid GPT disk image:

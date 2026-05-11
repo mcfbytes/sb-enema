@@ -5,8 +5,9 @@ This directory (data-seed/) is the build-time seed for the SB-ENEMA FAT32
 data partition (label: SB-ENEMA, mounted at /mnt/data at runtime).
 
 At build time, prepare-secureboot-objects.sh populates additional directories
-in the staging area, and post-image.sh copies everything onto the partition
-image.
+in the staging area, and post-image.sh copies the required staged content
+onto the partition image: sb-enema/, PreSignedObjects/, and any seed
+entries from data-seed/.
 
 Runtime partition layout
 ------------------------

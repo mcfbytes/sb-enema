@@ -7,7 +7,7 @@
 - Custom Owner path  
   User runs `sb-enema` → `handle_full_colonic()` calls `keygen_generate_keys()` which writes `/mnt/data/sb-enema/keys/{PK,KEK}.{key,crt}` → `stage_user_pk_kek()` + `stage_microsoft_kek_db_dbx()` + `stage_sign_db()` build `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.auth`; db uses certs from `/mnt/data/PreSignedObjects/DB/Certificates`, dbx pulls `/mnt/data/secureboot_artifacts/Firmware/DBX.bin` via `_find_dbx_binary()` (fallback `/mnt/data/PreSignedObjects/DBX/DBX.bin`, then `/mnt/data/sb-enema/payloads/microsoft/dbx.auth`) → `enroll()` previews delta and calls `efi-updatevar` writing db → dbx → KEK → PK.
 - Common assets  
-  Source certificates from `secureboot_objects` land at `/mnt/data/PreSignedObjects` on the data partition. The `data-seed/` tree seeds `README.txt` only; runtime directories (`sb-enema/payloads/`, `sb-enema/keys/`, `sb-enema/logs/`) are created on first use.
+  Source certificates from `secureboot_objects` land at `/mnt/data/PreSignedObjects` on the data partition. By default, the `data-seed/` tree seeds `README.txt`; additional files may also be present when pre-seeding keys or other assets. Runtime directories (`sb-enema/payloads/`, `sb-enema/keys/`, `sb-enema/logs/`) are otherwise created on first use.
 
 ## Issues Table
 

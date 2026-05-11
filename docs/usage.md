@@ -40,4 +40,4 @@ Matching `KEKDefault` certs are staged under `PAYLOAD_DIR/KEK/`; matching `dbDef
 - Provide your own PK/KEK keypairs by pre-placing `PK.key`, `PK.crt`, `KEK.key`, `KEK.crt` under `sb_enema/board/sb-enema/data-seed/sb-enema/keys/` before building, or directly on the USB’s `SB-ENEMA` partition at `sb-enema/keys/`. `keygen_generate_keys()` skips generation when the files already exist. See `data-seed/README.txt` for the complete partition layout.
 - The Secure Boot payloads are generated from the `third_party/secureboot_objects` submodule (template defaults to `MicrosoftAndThirdParty`). Adjust `TEMPLATE_NAME` or `ARCH` when running `scripts/prepare-secureboot-objects.sh` to use a different template/architecture.
 - To regenerate payloads without a full Buildroot build, run `scripts/prepare-secureboot-objects.sh` directly.
-- Adjust kernel/BusyBox options via the fragment files in `sb_enema/configs/` and associated fragment files.
+- Adjust Buildroot defaults in `sb_enema/configs/sb_enema_defconfig`, and edit kernel/BusyBox fragments in `sb_enema/board/sb-enema/kernel-fragment.config` and `sb_enema/board/sb-enema/busybox-fragment.config`.
