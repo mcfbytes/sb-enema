@@ -64,10 +64,12 @@ _stage_assert_payload_dir_safe() {
 # ---------------------------------------------------------------------------
 # stage_clear()
 #   Remove all staged content from PAYLOAD_DIR except the microsoft/
-#   subdirectory (which contains read-only pre-built payloads).
+#   subdirectory (which contains read-only pre-built payloads) and the
+#   SHA256SUMS manifest (build-time integrity manifest covering microsoft/
+#   payloads; required by safety_check_payload_integrity at preflight time).
 # ---------------------------------------------------------------------------
 stage_clear() {
-    log_info "Clearing staging area (preserving microsoft/ subdirectory)"
+    log_info "Clearing staging area (preserving microsoft/ subdirectory and SHA256SUMS manifest)"
 
     _stage_assert_payload_dir_safe
 
@@ -84,7 +86,9 @@ stage_clear() {
     local item
     for item in "${PAYLOAD_DIR}"/*; do
         [[ -e "${item}" ]] || continue
-        [[ "$(basename "${item}")" == "microsoft" ]] && continue
+        case "$(basename "${item}")" in
+            microsoft|SHA256SUMS) continue ;;
+        esac
         rm -rf "${item}"
         log_info "Removed staged item: ${item}"
     done
@@ -253,6 +257,73 @@ _pk_wrap_esl() {
         rm -f "${dst}"
         die "_pk_wrap_esl: failed to write auth-wrapped PK payload to ${dst}"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# stage_pk_resign_with_throwaway()
+#   Re-sign the currently staged PAYLOAD_DIR/PK.auth with an ephemeral
+#   throwaway RSA keypair, replacing the existing auth wrapper.  The PK
+#   certificate (the trust anchor that ends up in the PK EFI variable) lives
+#   in the ESL portion of the payload and is preserved unchanged; only the
+#   PKCS7 SignerInfos and EFI_TIME on the auth wrapper change.
+#
+#   Some firmware (recent EDK2/OVMF in particular, and a handful of OEM
+#   builds) invokes Pkcs7Verify on auth payloads even in Setup Mode and
+#   rejects payloads with an empty SignerInfos set -- which is exactly what
+#   Microsoft's pre-signed Imaging/PK.bin ships.  Re-signing with a real
+#   (if throwaway) signer satisfies the strict-firmware path.  UEFI §32.3.2
+#   only requires the auth payload to be well-formed when PK is NULL; the
+#   identity of the signer is irrelevant for first-time PK enrollment.
+#
+#   The throwaway key is generated under mktemp and discarded on RETURN; it
+#   never touches persistent storage.
+# ---------------------------------------------------------------------------
+stage_pk_resign_with_throwaway() {
+    local pk_auth="${PAYLOAD_DIR}/PK.auth"
+    [[ -f "${pk_auth}" ]] || { log_error "stage_pk_resign_with_throwaway: ${pk_auth} not found"; return 1; }
+
+    local workdir
+    workdir=$(mktemp -d) || { log_error "Failed to create temp directory"; return 1; }
+    # shellcheck disable=SC2064
+    trap "rm -rf '${workdir}'" RETURN
+
+    # Recover the raw ESL from the staged auth payload.  Works whether the
+    # source was a pre-signed MS auth file or a wrapped raw ESL.
+    local esl="${workdir}/PK.esl"
+    _dbx_esl_from_auth_or_raw "${pk_auth}" "${esl}"
+
+    # Generate a 2048-bit throwaway signer.  Short validity, restrictive
+    # permissions, no persistence beyond ${workdir}.
+    local throw_key="${workdir}/throwaway.key"
+    local throw_crt="${workdir}/throwaway.crt"
+    local old_umask
+    old_umask=$(umask)
+    umask 077
+    if ! openssl req -new -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+            -subj "/CN=SB-ENEMA Throwaway PK Signer" \
+            -keyout "${throw_key}" \
+            -out "${throw_crt}" >/dev/null 2>&1; then
+        umask "${old_umask}"
+        log_error "Failed to generate throwaway signing key"
+        return 1
+    fi
+    umask "${old_umask}"
+
+    OWNER_GUID=$(keygen_load_or_generate_guid)
+    keygen_assert_valid_guid "${OWNER_GUID}"
+
+    # Sign the recovered ESL with the throwaway key, fresh timestamp.
+    if ! sign-efi-sig-list -g "${OWNER_GUID}" \
+            -k "${throw_key}" -c "${throw_crt}" \
+            PK "${esl}" "${pk_auth}"; then
+        log_error "sign-efi-sig-list failed for throwaway PK re-sign"
+        return 1
+    fi
+
+    local sha256
+    sha256=$(sha256sum "${pk_auth}" | awk '{print $1}')
+    log_action "STAGE" "PK.auth" "RESIGNED" "throwaway-signed wrapper SHA256=${sha256}"
+    log_info "PK.auth re-signed with ephemeral throwaway key (cert in ESL unchanged)"
 }
 
 # ---------------------------------------------------------------------------

@@ -104,21 +104,27 @@ _enroll_report_partial_failure() {
 }
 
 # ---------------------------------------------------------------------------
-# _enroll_var <varname> <auth_file> <enrolled_vars_ref> [expected_fps]
+# _enroll_var <varname> <auth_file> <enrolled_vars_ref> [expected_fps] [quiet]
 #   Internal helper: write one EFI variable using efi-updatevar, verify,
 #   log, and handle failure.
 #   <enrolled_vars_ref> is a nameref to the array tracking enrolled vars.
 #   <expected_fps> is a newline-separated list of SHA-256 fingerprints from
 #   all staged certs for <varname>; verification succeeds when ANY enrolled
 #   cert matches ANY expected fingerprint.
-#   Returns 0 on success, calls _enroll_report_partial_failure and returns 1
-#   on failure.
+#   <quiet> = "quiet" suppresses the user-facing failure banner and red
+#   error log on a generic efi-updatevar non-zero exit (audit log_action is
+#   still recorded).  Setup-Mode-lost, timeout, and post-write verify
+#   failures are always reported regardless, because none of them are
+#   recoverable by retrying the same write.  Use "quiet" only when the
+#   caller intends to retry (e.g. _enroll_pk_with_fallback).
+#   Returns 0 on success, 1 on failure.
 # ---------------------------------------------------------------------------
 _enroll_var() {
     local varname="$1"
     local auth_file="$2"
     local -n _enrolled_ref="$3"
     local expected_fps="${4:-}"
+    local quiet="${5:-}"
 
     local var_label
     case "${varname}" in
@@ -197,11 +203,77 @@ _enroll_var() {
         return 1
     else
         log_action "ENROLL" "${varname}" "FAIL" "efi-updatevar returned exit code ${rc}"
+        if [[ "${quiet}" == "quiet" ]]; then
+            log_info "efi-updatevar returned exit code ${rc} for ${varname} (caller will retry)"
+            return 1
+        fi
         log_error "Failed to enroll ${varname}"
         local enrolled_str="${_enrolled_ref[*]:-}"
         _enroll_report_partial_failure "${varname}" "${enrolled_str:-(none)}"
         return 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# _enroll_pk_with_fallback <auth_file> <enrolled_vars_ref> [expected_fps]
+#   Attempt to enroll PK from <auth_file>.  On a generic efi-updatevar
+#   failure (i.e. firmware rejected the payload but the system is still in
+#   Setup Mode and the write did not time out), re-sign the staged PK ESL
+#   with an ephemeral throwaway key and retry once.
+#
+#   This works around firmware (recent EDK2/OVMF, and some real OEM
+#   implementations) that invokes Pkcs7Verify on the auth wrapper even in
+#   Setup Mode and rejects payloads with an empty SignerInfos set --
+#   notably Microsoft's pre-signed Imaging/PK.bin, which carries an empty
+#   PKCS7 stub per UEFI §32.3.2 (any valid auth payload is supposed to be
+#   accepted when PK is NULL).
+#
+#   The cert that ends up in PK is taken from the ESL inside the payload,
+#   not the PKCS7 signing cert, so re-signing does NOT change which key
+#   becomes the platform owner -- only who signed the update transaction.
+#   The throwaway key is generated in a tmpdir and discarded immediately.
+# ---------------------------------------------------------------------------
+_enroll_pk_with_fallback() {
+    local auth_file="$1"
+    local -n _epk_enrolled_ref="$2"
+    local expected_fps="${3:-}"
+
+    # First attempt: use the staged PK.auth as-is.  Suppress the user-facing
+    # failure banner so a successful retry leaves no scary "ENROLLMENT FAILED"
+    # output behind.
+    if _enroll_var "PK" "${auth_file}" _epk_enrolled_ref "${expected_fps}" "quiet"; then
+        return 0
+    fi
+
+    # Fallback is only useful when the resign helper is available and we are
+    # still in Setup Mode (i.e. the failure was firmware rejecting the auth
+    # wrapper, not an aborted transition to User Mode or a hung firmware).
+    if ! declare -F stage_pk_resign_with_throwaway >/dev/null 2>&1; then
+        log_error "Failed to enroll PK (no fallback available)"
+        local enrolled_str="${_epk_enrolled_ref[*]:-}"
+        _enroll_report_partial_failure "PK" "${enrolled_str:-(none)}"
+        return 1
+    fi
+    if ! safety_assert_setup_mode; then
+        log_action "ENROLL" "PK" "FAIL" "system left Setup Mode after first PK attempt; not retrying"
+        local enrolled_str="${_epk_enrolled_ref[*]:-}"
+        _enroll_report_partial_failure "PK" "${enrolled_str:-(none)}"
+        return 1
+    fi
+
+    log_warn "PK write rejected by firmware; retrying with throwaway-signed payload"
+    log_action "ENROLL" "PK" "RETRY" "first attempt failed; re-signing PK ESL with ephemeral key"
+    if ! stage_pk_resign_with_throwaway; then
+        log_error "PK fallback re-sign failed"
+        log_action "ENROLL" "PK" "FAIL" "stage_pk_resign_with_throwaway failed"
+        local enrolled_str="${_epk_enrolled_ref[*]:-}"
+        _enroll_report_partial_failure "PK" "${enrolled_str:-(none)}"
+        return 1
+    fi
+
+    # Second attempt: report failures normally this time -- there is no third
+    # try, so the user needs to see the banner if this one also fails.
+    _enroll_var "PK" "${auth_file}" _epk_enrolled_ref "${expected_fps}"
 }
 
 # ---------------------------------------------------------------------------
@@ -306,7 +378,7 @@ enroll_apply() {
 
     # 4. PK (LAST — writing PK exits Setup Mode)
     if [[ -f "${PAYLOAD_DIR}/PK.auth" ]]; then
-        _enroll_var "PK" "${PAYLOAD_DIR}/PK.auth" enrolled_vars "${pk_fps}" || return 1
+        _enroll_pk_with_fallback "${PAYLOAD_DIR}/PK.auth" enrolled_vars "${pk_fps}" || return 1
     fi
 
     if [[ ${#enrolled_vars[@]} -eq 0 ]]; then

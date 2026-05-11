@@ -37,7 +37,7 @@ Many systems wipe `KEK` and `db` before the tool runs. `KEKDefault` and `dbDefau
 Matching `KEKDefault` certs are staged under `PAYLOAD_DIR/KEK/`; matching `dbDefault` certs are staged under `PAYLOAD_DIR/db/`. This step is available as a standalone advanced operation (menu option [9]) and is **not** run automatically by the Full Colonic workflow — combine it manually when you need to preserve recognized OEM entries alongside a user PK/KEK enrollment.
 
 ## Customization
-- Provide your own PK/KEK/db/dbx certs by placing files in the corresponding directories under `buildroot-config/board/sb-enema/exfat-seed/` before building (or directly on the USB’s `SB-ENEMA` partition). If `secureboot_objects` artifacts are present they take precedence.
+- Provide your own PK/KEK keypairs by pre-placing `PK.key`, `PK.crt`, `KEK.key`, `KEK.crt` under `sb_enema/board/sb-enema/data-seed/sb-enema/keys/` before building, or directly on the USB’s `SB-ENEMA` partition at `sb-enema/keys/`. `keygen_generate_keys()` skips generation when the files already exist. See `data-seed/README.txt` for the complete partition layout.
 - The Secure Boot payloads are generated from the `third_party/secureboot_objects` submodule (template defaults to `MicrosoftAndThirdParty`). Adjust `TEMPLATE_NAME` or `ARCH` when running `scripts/prepare-secureboot-objects.sh` to use a different template/architecture.
 - To regenerate payloads without a full Buildroot build, run `scripts/prepare-secureboot-objects.sh` directly.
-- Adjust kernel/BusyBox options via the fragment files in `buildroot-config/board/sb-enema/`.
+- Adjust Buildroot defaults in `sb_enema/configs/sb_enema_defconfig`, and edit kernel/BusyBox fragments in `sb_enema/board/sb-enema/kernel-fragment.config` and `sb_enema/board/sb-enema/busybox-fragment.config`.
