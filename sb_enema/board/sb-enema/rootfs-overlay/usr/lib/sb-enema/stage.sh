@@ -64,10 +64,12 @@ _stage_assert_payload_dir_safe() {
 # ---------------------------------------------------------------------------
 # stage_clear()
 #   Remove all staged content from PAYLOAD_DIR except the microsoft/
-#   subdirectory (which contains read-only pre-built payloads).
+#   subdirectory (which contains read-only pre-built payloads) and the
+#   SHA256SUMS manifest (build-time integrity manifest covering microsoft/
+#   payloads; required by safety_check_payload_integrity at preflight time).
 # ---------------------------------------------------------------------------
 stage_clear() {
-    log_info "Clearing staging area (preserving microsoft/ subdirectory)"
+    log_info "Clearing staging area (preserving microsoft/ subdirectory and SHA256SUMS manifest)"
 
     _stage_assert_payload_dir_safe
 
@@ -84,7 +86,9 @@ stage_clear() {
     local item
     for item in "${PAYLOAD_DIR}"/*; do
         [[ -e "${item}" ]] || continue
-        [[ "$(basename "${item}")" == "microsoft" ]] && continue
+        case "$(basename "${item}")" in
+            microsoft|SHA256SUMS) continue ;;
+        esac
         rm -rf "${item}"
         log_info "Removed staged item: ${item}"
     done
