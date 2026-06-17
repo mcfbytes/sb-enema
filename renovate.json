@@ -3,6 +3,9 @@
   "extends": [
     "config:recommended"
   ],
+  "git-submodules": {
+    "enabled": true
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -21,6 +24,12 @@
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["buildroot/buildroot"],
       "allowedVersions": "/^2026\\.02(\\.\\d+)?$/"
+    },
+    {
+      "description": "Pin the secureboot_objects submodule to plain vX.Y.Z tags and ignore the -Signed variant",
+      "matchManagers": ["git-submodules"],
+      "matchDepNames": ["third_party/secureboot_objects"],
+      "allowedVersions": "/^v\\d+\\.\\d+\\.\\d+$/"
     }
   ]
 }
