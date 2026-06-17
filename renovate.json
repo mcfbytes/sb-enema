@@ -7,7 +7,7 @@
     {
       "customType": "regex",
       "description": "Update Buildroot version in the Makefile",
-      "fileMatch": ["(^|/)Makefile$"],
+      "managerFilePatterns": ["(^|/)Makefile$"],
       "matchStrings": [
         "BUILDROOT_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
       ],
