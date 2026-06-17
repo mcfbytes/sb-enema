@@ -2,5 +2,25 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Buildroot version in the Makefile",
+      "managerFilePatterns": ["(^|/)Makefile$"],
+      "matchStrings": [
+        "BUILDROOT_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "buildroot/buildroot",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "loose"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["buildroot/buildroot"],
+      "allowedVersions": "/^2026\\.02(\\.\\d+)?$/"
+    }
   ]
 }
