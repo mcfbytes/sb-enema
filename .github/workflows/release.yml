@@ -59,20 +59,20 @@ jobs:
         run: echo "BUILDROOT_VERSION=$(grep '^BUILDROOT_VERSION' Makefile | cut -d= -f2 | xargs)" >> $GITHUB_ENV
 
       - name: Cache Buildroot tarball
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: output/buildroot-*.tar.gz
           key: br-tarball-${{ env.BUILDROOT_VERSION }}
 
       - name: Cache Buildroot DL dir
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: output/dl
           key: br-dl-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('sb_enema/configs/sb_enema_defconfig') }}
           restore-keys: br-dl-${{ env.BUILDROOT_VERSION }}-
 
       - name: Cache Buildroot host toolchain
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: |
             output/br-out/host
