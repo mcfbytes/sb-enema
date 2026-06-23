@@ -1,3 +1,4 @@
 [submodule "third_party/secureboot_objects"]
 	path = third_party/secureboot_objects
 	url = https://github.com/microsoft/secureboot_objects
+	branch = v1.6.4

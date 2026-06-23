@@ -26,9 +26,10 @@
       "allowedVersions": "/^2026\\.02(\\.\\d+)?$/"
     },
     {
-      "description": "Pin the secureboot_objects submodule to plain vX.Y.Z tags and ignore the -Signed variant",
+      "description": "Track the secureboot_objects submodule by plain vX.Y.Z tags only (not branch commits), ignoring the -signed variant",
       "matchManagers": ["git-submodules"],
       "matchDepNames": ["third_party/secureboot_objects"],
+      "versioning": "semver-coerced",
       "allowedVersions": "/^v\\d+\\.\\d+\\.\\d+$/"
     }
   ]
