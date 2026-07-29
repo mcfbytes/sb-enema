@@ -92,6 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom-pinned versions from hash checking by default, this also sets
   `BR2_DOWNLOAD_FORCE_CHECK_HASHES=y`; without it a version bump with a stale
   hash file would silently download an unverified tarball instead of failing.
+  The pin also requires `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y`:
+  Buildroot only derives the kernel-headers series from the version string when
+  the *latest* version is selected, and its fallback default is 2.6 — which
+  makes glibc unsatisfiable, so kconfig silently substitutes uClibc and the
+  build dies thousands of lines later with a misleading headers mismatch.
+  `scripts/test-defconfig.sh` now asserts the two stay in step.
 - **Renovate** tracks the pinned kernel through a custom `kernel.org`
   datasource (constrained to 6.18.x) and the Buildroot 2026.05 series.
 - **GitHub Actions runners moved to `ubuntu-26.04`** across all workflows.

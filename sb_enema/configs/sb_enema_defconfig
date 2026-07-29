@@ -60,6 +60,21 @@ BR2_LINUX_KERNEL=y
 # and the hash together or the build fails.
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.40"
+
+# Kernel headers series, and it MUST be kept in step with the version above.
+#
+# Buildroot derives BR2_TOOLCHAIN_HEADERS_AT_LEAST from the kernel version only
+# when the LATEST version is selected; with a custom pin it cannot parse the
+# series out of the version string, so it falls back to the choice default in
+# package/linux-headers/Config.in.host -- which is
+# BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_REALLY_OLD, i.e. 2.6.
+#
+# That failure is silent and destructive: with headers advertised as 2.6,
+# glibc's minimum-version dependency is unsatisfiable, so kconfig quietly drops
+# BR2_TOOLCHAIN_BUILDROOT_GLIBC and selects uClibc instead. The build then dies
+# much later with "Incorrect selection of kernel headers: expected 2.6.x, got
+# 6.18.x", several thousand lines into the log and nowhere near the cause.
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../../sb_enema/board/sb-enema/kernel-fragment.config"
