@@ -2,6 +2,13 @@
 
 ## Prerequisites
 - Host tools: `curl`, `openssl`, `mkfs.fat` (from `dosfstools`), `tar`, `rsync`, `sudo`, `python3-venv`, `git` with submodule support (GitHub Actions workflows install these automatically).
+- **GNU coreutils `install`.** Buildroot refuses to build when `/usr/bin/install` is the uutils reimplementation, because of a bug that corrupts installed files ([uutils/coreutils#12166](https://github.com/uutils/coreutils/issues/12166)). Ubuntu 26.04 and other recent distributions ship uutils as the default, so the build stops early with `You have an uutils 'install' version installed`. Check with `install --version`; if it reports uutils, switch to the GNU one:
+
+  ```sh
+  sudo update-alternatives --install /usr/bin/install install /usr/bin/gnuinstall 100
+  ```
+
+  The CI and release workflows do this automatically.
 
 ## Build steps
 ```sh

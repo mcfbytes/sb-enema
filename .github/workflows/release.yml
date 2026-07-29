@@ -50,6 +50,18 @@ jobs:
             rsync cpio unzip zip wget xz-utils file python3-venv curl git \
             pkg-config libffi-dev mtools
 
+      # Ubuntu 26.04 ships uutils coreutils as the default `install`, and
+      # Buildroot refuses to build against it (uutils/coreutils#12166 corrupts
+      # installed files). Buildroot's own dependency check aborts with exactly
+      # this remedy. Ubuntu 24.04 shipped GNU coreutils, so this is only needed
+      # since the runner moved to 26.04.
+      - name: Use GNU coreutils install
+        run: |
+          if install --version 2>&1 | grep -qi uutils; then
+            sudo update-alternatives --install /usr/bin/install install /usr/bin/gnuinstall 100
+          fi
+          install --version | head -1
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:

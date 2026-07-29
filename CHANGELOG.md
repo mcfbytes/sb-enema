@@ -102,6 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datasource (constrained to 6.18.x) and the Buildroot 2026.05 series.
 - **GitHub Actions runners moved to `ubuntu-26.04`** across all workflows.
   Note that this image is still in public preview on GitHub-hosted runners.
+  It also ships uutils coreutils as the default `install`, which Buildroot
+  refuses to build against ([uutils/coreutils#12166](https://github.com/uutils/coreutils/issues/12166)),
+  so the build and release workflows now switch `install` to the GNU
+  implementation first. Documented in `docs/usage.md` for local builds, which
+  hit the same wall on any uutils-based distribution.
 
 ### Added
 
