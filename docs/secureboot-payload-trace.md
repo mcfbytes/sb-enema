@@ -42,7 +42,7 @@
 | `/mnt/data/secureboot_artifacts/Firmware/DBX.bin` | prepare-secureboot-objects → post-image | `_find_dbx_binary()` in `stage.sh` | Primary dbx ESL source; fallback to PreSignedObjects/DBX/DBX.bin then microsoft/dbx.auth. |
 | `/mnt/data/sb-enema/payloads/{PK,KEK,db,dbx}.*` | `stage_*` functions or `stage_sign_*()`  | `update_compute()`, `preview_display()`, `enroll()` | PAYLOAD_DIR in common.sh; cleared by `stage_clear()`. |
 | `/mnt/data/sb-enema/keys/{PK,KEK}.{key,crt}` | `keygen_generate_keys()` | `stage_user_pk_kek()`, `stage_sign_kek()`, `stage_sign_db()`, `_stage_build_dbx_payload()` | Created on first Full Colonic run; skipped if files already exist. |
-| `/mnt/data/sb-enema/kek_update_map.json` | prepare-secureboot-objects (copies from `PostSignedObjects/KEK/`) | `_is_in_kek_update_map()` in `stage.sh` | Required for vendor cert filtering in `stage_bios_entries()`; warning emitted and step skipped if absent. |
+| `/mnt/data/sb-enema/kek_update_map.json` | prepare-secureboot-objects (copies from `PostSignedObjects/KEK/`) | `_stage_recognize_platform()` in `stage.sh` | Keyed on Platform Key fingerprints; used to recognise the OEM platform from its PK for provenance logging. Not a filter for `KEKDefault`/`dbDefault` members. Absence is non-fatal. |
 | `/mnt/data/sb-enema/logs` | `log_init()` (mkdir on first run) | `log.sh` | Runtime creates this directory; no seed placeholder needed. |
 
 ## Overall Assessment

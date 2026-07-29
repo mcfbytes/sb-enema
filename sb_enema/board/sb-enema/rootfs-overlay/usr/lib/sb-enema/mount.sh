@@ -16,8 +16,17 @@ mount_efivars() {
     fi
     log_info "Mounting efivarfs at ${EFIVARS_DIR}"
     mkdir -p "${EFIVARS_DIR}"
-    mount -t efivarfs efivarfs "${EFIVARS_DIR}" \
-        || die "Failed to mount efivarfs at ${EFIVARS_DIR}"
+    if ! mount -t efivarfs efivarfs "${EFIVARS_DIR}"; then
+        # The mountpoint check above is not atomic: another process can mount
+        # efivarfs between the check and the mount, and the loser then fails
+        # with EBUSY even though the filesystem is present and usable. Re-check
+        # before treating this as fatal.
+        if mountpoint -q "${EFIVARS_DIR}" 2>/dev/null; then
+            log_info "efivarfs was mounted concurrently at ${EFIVARS_DIR}"
+            return
+        fi
+        die "Failed to mount efivarfs at ${EFIVARS_DIR}"
+    fi
     log_success "efivarfs mounted"
 }
 

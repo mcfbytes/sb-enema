@@ -34,12 +34,33 @@ MSFT_PAYLOADS_SUBDIR="${PAYLOAD_DIR}/microsoft"
 MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 
 # ---------------------------------------------------------------------------
-# SHA-256 fingerprints of legacy Microsoft certificates excluded from the
-# Custom-Owned (user-key) enrollment path.  Both are expiring in 2026 and
-# are superseded by their 2023 counterparts.
+# Certificate policy for the Custom-Owned (user-key) path
+#
+# Every Microsoft certificate shipped in PreSignedObjects is enrolled; nothing
+# is filtered out.  Earlier revisions dropped "Microsoft Corporation KEK CA
+# 2011" from KEK and "Microsoft Windows Production PCA 2011" from db on the
+# grounds that both expire in 2026 and are superseded by 2023 replacements.
+# Both exclusions were wrong, for separate reasons:
+#
+#   db  — Windows Production PCA 2011 signs the Windows Boot Manager on every
+#         installation that has not yet received Microsoft's 2023-signed boot
+#         manager (a staged rollout still incomplete as of 2026-07), plus WinRE
+#         and any install/recovery media predating the migration.  Dropping it
+#         leaves a healthy Windows install unbootable under Secure Boot.
+#
+#   KEK — every Microsoft Secure Boot servicing package published to date is
+#         signed under KEK CA 2011, not the 2023 KEK.  Verified against the
+#         vendored submodule: PostSignedObjects/DBX/*/DBXUpdate.bin all chain
+#         "Microsoft Windows UEFI Key Exchange Key" -> "Microsoft Corporation
+#         KEK CA 2011".  Without it the machine can never apply a Microsoft dbx
+#         revocation update.
+#
+# Expiry itself is not a reason to exclude anything: UEFI image verification
+# does not check X.509 validity dates (spec 32.5 has no expiry step; edk2's
+# Pkcs7Verify passes X509_V_FLAG_NO_CHECK_TIME).  Revocation happens through
+# dbx, and dbx alone.  The build-time counterpart to this policy is enforced by
+# scripts/check-secureboot-policy.py.
 # ---------------------------------------------------------------------------
-readonly _STAGE_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
-readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
 
 # ---------------------------------------------------------------------------
 # Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
@@ -458,33 +479,6 @@ stage_microsoft_kek_db_dbx() {
 }
 
 # ---------------------------------------------------------------------------
-# _stage_cert_fp <pem_file>
-#   Print the SHA-256 fingerprint of a PEM certificate as lowercase hex
-#   without colons.  Returns an empty string on error.
-# ---------------------------------------------------------------------------
-_stage_cert_fp() {
-    local cert="$1"
-
-    [[ -f "$cert" && -r "$cert" ]] || return 0
-
-    local fp
-    if ! fp="$(
-        (
-            # Disable errexit and pipefail in this subshell so failures in the
-            # pipeline do not abort the whole script. On any error, the command
-            # substitution will fail and we return success with empty output.
-            set +e +o pipefail
-            openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-                | _fp_normalize
-        )
-    )"; then
-        return 0
-    fi
-
-    printf '%s\n' "$fp"
-}
-
-# ---------------------------------------------------------------------------
 # _stage_build_kek_esl <workdir> <kek_crt> <owner_guid>
 #   Internal helper: combine user KEK + Microsoft KEK + any vendor-staged KEK
 #   certificates into a single ESL at <workdir>/KEK.esl.
@@ -527,17 +521,9 @@ _stage_build_kek_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
-            # Exclude legacy Microsoft Corporation KEK CA 2011 from Custom-Owned
-            # enrollments.  The 2023 replacement (KEK 2K CA 2023) is the current
-            # recommended KEK for all new provisioning.
-            local cert_fp
-            cert_fp=$(_stage_cert_fp "${cert_pem}")
-            if [[ -z "${cert_fp}" ]]; then
-                log_warn "Could not compute fingerprint for KEK cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_KEK_CA_2011_FP}" ]]; then
-                log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
-                continue
-            fi
+            # No filtering: both Microsoft KEKs are enrolled.  See the
+            # certificate-policy note at the top of this file for why the 2011
+            # KEK is required rather than merely tolerated.
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
                 || die "cert-to-efi-sig-list failed for Microsoft KEK certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
@@ -603,19 +589,10 @@ _stage_build_db_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
-            # Exclude legacy Microsoft Windows Production PCA 2011 from Custom-Owned
-            # db enrollments.  This PCA is superseded by Windows UEFI CA 2023 and is
-            # not a UEFI Secure Boot certificate.  The 2023 replacement certificates
-            # (Microsoft UEFI CA 2023, Microsoft Option ROM UEFI CA 2023) are present
-            # in PreSignedObjects and will be included via this same loop.
-            local cert_fp
-            cert_fp=$(_stage_cert_fp "${cert_pem}")
-            if [[ -z "${cert_fp}" ]]; then
-                log_warn "Could not compute fingerprint for db cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_WIN_PCA_2011_FP}" ]]; then
-                log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
-                continue
-            fi
+            # No filtering: every Microsoft db certificate staged into
+            # PAYLOAD_DIR/db is enrolled, both 2011 and 2023 generations.  See
+            # the certificate-policy note at the top of this file for why
+            # Windows Production PCA 2011 must stay.
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
                 || die "cert-to-efi-sig-list failed for db certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
@@ -998,10 +975,21 @@ stage_sign_kek() {
 # _is_in_kek_update_map <sha1_fingerprint>
 #   Return 0 if <sha1_fingerprint> (lowercase hex, no colons) appears as a
 #   top-level key in KEK_UPDATE_MAP (kek_update_map.json).
-#   The JSON maps SHA-1 PK certificate fingerprints to vendor KEK update bins.
+#
+#   IMPORTANT: the map is keyed on **Platform Key** fingerprints. Each entry
+#   maps one vendor PK to the KEK update package for that platform, e.g.
+#     "9a3056b5..." -> {"KEKUpdate": "AMI/KEKUpdate_AMI_PK1.bin",
+#                       "Certificate": {"issued_to": "CN=DO NOT TRUST - AMI Test PK", ...}}
+#
+#   So this answers "do I recognise this platform by its PK?" and nothing else.
+#   It must NOT be used to test member certificates of KEKDefault/dbDefault:
+#   those are KEK/db certificates, not PKs, so they essentially never appear as
+#   keys and every one of them would be rejected. stage_bios_entries() used to
+#   do exactly that.
+#
 #   Returns 1 if the file is absent or the fingerprint is not found.
 #   File-existence is cached in _KEK_UPDATE_MAP_STATUS so that a single warning
-#   is emitted even when called repeatedly from stage_bios_entries().
+#   is emitted even when called repeatedly.
 # ---------------------------------------------------------------------------
 _is_in_kek_update_map() {
     local sha1="$1"
@@ -1025,6 +1013,44 @@ _is_in_kek_update_map() {
 }
 
 # ---------------------------------------------------------------------------
+# _stage_recognize_platform()
+#   Look the system's Platform Key up in kek_update_map.json and log which OEM
+#   platform it corresponds to.  This is the map's actual purpose: it is keyed
+#   on PK fingerprints.
+#
+#   Purely informational — it records provenance in the audit log so an operator
+#   can see whose factory defaults are being preserved.  It deliberately does
+#   NOT gate staging: an unrecognised platform is ordinary (the map only covers
+#   OEMs that submitted KEK update packages to Microsoft), and refusing to
+#   preserve vendor certificates on that basis is what the previous
+#   implementation got wrong.
+# ---------------------------------------------------------------------------
+_stage_recognize_platform() {
+    local tmpdir="$1"
+    local var
+
+    for var in PK PKDefault; do
+        local dir="${tmpdir}/platform-${var}"
+        mkdir -p "${dir}"
+        efivar_extract_certs "${var}" "${dir}" 2>/dev/null || continue
+        [[ -f "${dir}/${var}-0.der" ]] || continue
+
+        local sha1_hex
+        sha1_hex=$(openssl x509 -in "${dir}/${var}-0.der" -inform DER -noout -fingerprint -sha1 2>/dev/null \
+                   | _fp_normalize) || continue
+
+        if _is_in_kek_update_map "${sha1_hex}"; then
+            local vendor
+            vendor=$(jq -r --arg k "${sha1_hex}" '.[$k].KEKUpdate // ""' "${KEK_UPDATE_MAP}" 2>/dev/null)
+            log_info "Recognised platform from ${var} (SHA1=${sha1_hex}): ${vendor%%/*}"
+        else
+            log_info "Platform ${var} (SHA1=${sha1_hex}) is not in kek_update_map.json; vendor certificates are still preserved"
+        fi
+        return 0
+    done
+}
+
+# ---------------------------------------------------------------------------
 # stage_bios_entries()
 #   Stage vendor default firmware entries from KEKDefault and dbDefault —
 #   the read-only NVRAM variables that hold the OEM-factory Secure Boot
@@ -1034,15 +1060,29 @@ _is_in_kek_update_map() {
 #   dbDefault are preserved by the firmware and represent the vendor-installed
 #   baseline that should be re-instated.
 #
-#   Inclusion criteria (both must pass):
-#   1. The cert's SHA-1 fingerprint appears as a key in kek_update_map.json
-#      (the Microsoft OEM vendor PK → KEK update map from the
-#      secureboot_objects submodule).  Certs not in this map are skipped.
-#   2. The cert's SHA-256 fingerprint does NOT appear in known-test-pks.txt.
-#      Test/placeholder certificates are never staged.
+#   Inclusion criteria (all must pass):
+#   1. The cert's SHA-256 fingerprint does NOT appear in known-test-pks.txt.
+#      Test/placeholder certificates — e.g. "DO NOT TRUST - AMI Test PK", which
+#      real boards genuinely ship — are never staged.
+#   2. The cert is not Microsoft-owned (those are handled by
+#      stage_microsoft_kek_db_dbx, and staging them here would duplicate them).
 #
-#   Microsoft-signed KEK/db certs are also excluded (they are handled by
-#   stage_microsoft_kek_db_dbx).
+#   These certificates come from read-only firmware NVRAM that the OEM
+#   populated at the factory, so the baseline is trustworthy by construction;
+#   the checks above exist to drop placeholders and avoid duplication, not to
+#   establish trust.
+#
+#   Earlier revisions added a third criterion: the cert's SHA-1 had to appear as
+#   a key in kek_update_map.json.  That was a type error.  The map is keyed on
+#   *Platform Key* fingerprints, one per OEM platform, while the certificates
+#   being tested here are KEKDefault/dbDefault members — KEK and db
+#   certificates, not PKs.  They essentially never appear as keys, so the gate
+#   silently discarded nearly every OEM certificate, defeating the entire
+#   purpose of the operation and breaking OEM recovery tooling that depends on
+#   those entries (HP Sure Recover, Dell SupportAssist OS Recovery, Lenovo
+#   UEFI diagnostics, OEM-signed option ROMs).  The map is now used for what it
+#   is actually for — recognising the platform from its PK, see
+#   _stage_recognize_platform().
 #
 #   Applies to KEKDefault → staged under PAYLOAD_DIR/KEK/
 #             dbDefault   → staged under PAYLOAD_DIR/db/
@@ -1054,6 +1094,8 @@ stage_bios_entries() {
     tmpdir=$(mktemp -d) || { log_error "Failed to create temp directory"; return 1; }
     # shellcheck disable=SC2064
     trap "rm -rf '${tmpdir}'" RETURN
+
+    _stage_recognize_platform "${tmpdir}"
 
     local varname stagedir
     for varname in KEKDefault dbDefault; do
@@ -1075,14 +1117,11 @@ stage_bios_entries() {
         while [[ -f "${extractdir}/${varname}-${idx}.der" ]]; do
             local der="${extractdir}/${varname}-${idx}.der"
 
-            # Compute SHA-1 fingerprint — used to look up certs in kek_update_map.json
+            # SHA-1 is recorded in the log for operator traceability only; it is
+            # not a gate.  See the note above about kek_update_map.json.
             local sha1_hex
             sha1_hex=$(openssl x509 -in "${der}" -inform DER -noout -fingerprint -sha1 2>/dev/null \
-                       | _fp_normalize) || {
-                log_warn "Could not compute SHA-1 for ${varname}-${idx}.der; skipping"
-                idx=$((idx + 1))
-                continue
-            }
+                       | _fp_normalize) || sha1_hex="(unknown)"
 
             # Compute SHA-256 fingerprint — used for test-cert and Microsoft-cert checks
             local sha256_hex
@@ -1092,13 +1131,6 @@ stage_bios_entries() {
                 idx=$((idx + 1))
                 continue
             }
-
-            # Skip certs not present in the vendor kek_update_map.json
-            if ! _is_in_kek_update_map "${sha1_hex}"; then
-                log_info "${varname} cert ${idx} not in kek_update_map.json (SHA1=${sha1_hex}); skipping"
-                idx=$((idx + 1))
-                continue
-            fi
 
             # Skip known test/placeholder certificates
             if certdb_is_test_pk "${sha256_hex}"; then

@@ -28,8 +28,53 @@ BR2_PACKAGE_EFITOOLS=y
 BR2_PACKAGE_SBSIGNTOOLS=y
 BR2_PACKAGE_JQ=y
 
+# Downloads
+#
+# Buildroot does NOT hash-check packages pinned to a custom version by default:
+# linux/linux.mk and package/linux-headers/linux-headers.mk both add their
+# tarball to BR_NO_CHECK_HASH_FOR unless the LATEST version is selected, and
+# Config.in states it outright ("Buildroot checks hashes of all packages
+# downloaded, except those for which a custom version is used").  Since we pin
+# the kernel below, that default would leave the kernel tarball unverified.
+#
+# This option blanks BR_NO_CHECK_HASH_FOR, so a download with no matching hash
+# line is a hard error instead of a silent skip.  Together with the hash files
+# under sb_enema/patches/, it makes a version bump fail closed: change the
+# version without changing the hash and the build stops with
+# "ERROR: No hash found for linux-<version>.tar.xz".
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+
 # Kernel configuration
 BR2_LINUX_KERNEL=y
+
+# Pin the kernel to an explicit 6.18.x longterm release rather than tracking
+# Buildroot's default (BR2_LINUX_KERNEL_LATEST_VERSION), which follows the
+# newest mainline series and moves with every Buildroot bump.  A pinned
+# longterm kernel keeps the boot environment reproducible across builds and
+# limits us to a series that receives security fixes for years.
+#
+# The SHA-256 for this tarball is pinned in sb_enema/patches/linux/linux.hash
+# (and reused for linux-headers, which downloads the same tarball).  Buildroot
+# finds those files via BR2_GLOBAL_PATCH_DIR; BR2_DOWNLOAD_FORCE_CHECK_HASHES
+# above is what makes them mandatory rather than advisory.  Bump the version
+# and the hash together or the build fails.
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.40"
+
+# Kernel headers series, and it MUST be kept in step with the version above.
+#
+# Buildroot derives BR2_TOOLCHAIN_HEADERS_AT_LEAST from the kernel version only
+# when the LATEST version is selected; with a custom pin it cannot parse the
+# series out of the version string, so it falls back to the choice default in
+# package/linux-headers/Config.in.host -- which is
+# BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_REALLY_OLD, i.e. 2.6.
+#
+# That failure is silent and destructive: with headers advertised as 2.6,
+# glibc's minimum-version dependency is unsatisfiable, so kconfig quietly drops
+# BR2_TOOLCHAIN_BUILDROOT_GLIBC and selects uClibc instead. The build then dies
+# much later with "Incorrect selection of kernel headers: expected 2.6.x, got
+# 6.18.x", several thousand lines into the log and nowhere near the cause.
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../../sb_enema/board/sb-enema/kernel-fragment.config"

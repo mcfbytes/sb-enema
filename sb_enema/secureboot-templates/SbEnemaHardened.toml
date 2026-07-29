@@ -1,0 +1,151 @@
+# @file
+# Template Name: SB-ENEMA Hardened — 2023-only, full revocations
+#
+# OPT-IN ONLY.  This is NOT the default; sb_enema/secureboot-templates/
+# SbEnemaRecovery.toml is.  Select it explicitly:
+#
+#   KEYSTORE=sb_enema/secureboot-templates/SbEnemaHardened.toml \
+#       scripts/prepare-secureboot-objects.sh
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE USING IT
+# ---------------------------------------------------------------------------
+# This profile enrolls the certificate-class and SVN revocations that Microsoft
+# publishes but ships only in the explicitly optional DBXUpdate2024 package,
+# and correspondingly drops the 2011 certificates from db.
+#
+# A machine provisioned this way will REFUSE TO BOOT:
+#
+#   * any Windows installation whose boot manager has not yet been migrated to
+#     Windows UEFI CA 2023 -- the rollout is staged and, as of 2026-07, still
+#     incomplete;
+#   * Windows installation and recovery media created before that migration,
+#     including WinRE and PXE/WDS images;
+#   * any Windows Boot Manager whose embedded SVN is below the enrolled floor,
+#     even if it is 2023-signed;
+#   * Linux shims and PCIe option ROMs still signed only under the 2011
+#     third-party UEFI CA, which is most of what is in the field today.
+#
+# Microsoft's own warning for the equivalent package is that a device applying
+# it "will be unable to boot existing Windows boot media".
+#
+# Use this only on a machine you have verified is fully migrated, where you
+# want the pre-2023 attack surface (CVE-2023-24932 / BlackLotus and the
+# bootloaders below the SVN floor) closed. For a recovery tool run against
+# someone else's machine, SbEnemaRecovery.toml is the correct choice.
+#
+# ---------------------------------------------------------------------------
+# Why the two halves are coupled
+# ---------------------------------------------------------------------------
+# A dbx match beats a db match, so revoking a certificate that db still trusts
+# produces a key set where the db entry is dead weight and everything signed by
+# that CA stops booting. Enrolling the revocations therefore REQUIRES dropping
+# the corresponding db entries, which is why this file does both.
+# scripts/check-secureboot-policy.py enforces the coupling and fails the build
+# if a certificate ever appears in both.
+#
+# KEK keeps both Microsoft KEKs for the same reason as the recovery profile:
+# every Microsoft servicing package published to date is signed under the 2011
+# KEK, and it is not revoked by anything.
+#
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# (Derived from microsoft/secureboot_objects, Copyright (C) Microsoft Corporation.)
+#
+################################
+# PK — Platform Key            #
+################################
+[PK]
+help = "Microsoft's Windows OEM Devices PK. Enrolled only on the Microsoft-owned path; the custom-owned path replaces this with a user-generated PK."
+
+[[PK.files]]
+path = "PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der"
+sha1 = 0x3D8660C0CB2D57B189C3D7995572A552F75E48B5
+sha256 = "2f569e8edaf9657dc4951c29598725255c7f821472db71374211fe44d082546f"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "Platform Key (owner) who may authorize changes to the KEK Variable"
+
+###################################
+# KEK — Key Exchange Keys         #
+###################################
+[KEK]
+help = "Both Microsoft KEKs. The 2023 KEK is the forward-looking anchor; the 2011 KEK is what every currently-published Microsoft db/dbx servicing package is actually signed under."
+
+[[KEK.files]]
+path = "PreSignedObjects/KEK/Certificates/microsoft corporation kek 2k ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239775"
+sha1 = 0x459AB6FB5E284D272D5E3E6ABC8ED663829D632B
+sha256 = "3cd3f0309edae228767a976dd40d9f4affc4fbd5218f2e8cc3c9dd97e8ac6f9d"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ Microsoft authorizes signature database updates"
+
+[[KEK.files]]
+path = "PreSignedObjects/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der"
+url = "https://go.microsoft.com/fwlink/?LinkId=321185"
+sha1 = 0x31590BFD89C9D74ED087DFAC66334B3931254B30
+sha256 = "a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "Signer of every Microsoft dbx/db servicing package published to date; required for the machine to accept future Microsoft revocation updates"
+
+##################################
+# DB — Allowed Signature DB      #
+##################################
+[DB]
+help = "2023 certificates only. The 2011 CAs are deliberately absent because dbx below revokes Windows Production PCA 2011; see the header for what stops booting as a result."
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/windows uefi ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239776"
+sha1 = 0x45A0FA32604773C82433C3B7D59E7466B3AC0C67
+sha256 = "076f1fea90ac29155ebf77c17682f75f1fdd1be196da302dc8461e350a9ae330"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed Windows boot media (e.g. 2023 signed Windows)"
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/microsoft uefi ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239872"
+sha1 = 0xB5EEB4A6706048073F0ED296E7F580A790B59EAA
+sha256 = "f6124e34125bee3fe6d79a574eaa7b91c0e7bd9d929c1a321178efd611dad901"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed third-party UEFI applications (e.g. 2023 signed Linux shim)"
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/microsoft option rom uefi ca 2023.der"
+url = "http://www.microsoft.com/pkiops/certs/microsoft%20option%20rom%20uefi%20ca%202023.crt"
+sha1 = 0x3FB39E2B8BD183BF9E4594E72183CA60AFCD4277
+sha256 = "e5be3e64c6e66a281457ecdece0d6d0787577aad2a3a0144262c10c14ba8d8f1"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed third-party option ROMs (graphics/storage/networking)"
+
+############################
+# DBX — Forbidden          #
+############################
+[DBX]
+help = "Microsoft's revocation list, filtered per architecture, including certificate-class and SVN revocations."
+
+# Consumed by scripts/append-dbx-revocations.py, not by Microsoft's generator,
+# which emits image hashes only. These are what make this profile "hardened" --
+# and what makes it dangerous on an unmigrated machine. See the file header.
+include_certificates = true
+include_svns = true
+
+# Unlike the certificate entries above, this source file legitimately changes
+# whenever Microsoft publishes new revocations, so the hashes below must be
+# refreshed on every secureboot_objects bump.  That is deliberate: a change to
+# what is revoked is a policy change worth a human look, since a dbx entry can
+# stop a machine booting.  prepare-secureboot-objects.sh fails the build until
+# they are updated.  Review the delta before refreshing -- in particular whether
+# the "certificates" and "svns" lists changed, not just the image hashes.
+#
+#   sha256sum third_party/secureboot_objects/PreSignedObjects/DBX/dbx_info_msft_latest.json
+#   sha1sum   third_party/secureboot_objects/PreSignedObjects/DBX/dbx_info_msft_latest.json
+#
+# Note that every stock Microsoft template still declares
+# 0x8818A4486178E0B253FBBB6F0A9E64DC144E2480 here, which has been stale since
+# upstream last updated this file (2025-10-24).  Their generator ignores the
+# field, so nothing upstream noticed; ours checks it, so the value below is the
+# real one.
+[[DBX.files]]
+path = "PreSignedObjects/DBX/dbx_info_msft_latest.json"
+sha1 = 0x08C2CF1601BDC27A6116FE43087403D1135755A4
+sha256 = "1020f0ef865f8cf22740298d928a01355ab51cb1d8d473b637fd6d83f74eb3f5"
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"

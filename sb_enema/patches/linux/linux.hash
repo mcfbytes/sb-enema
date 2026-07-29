@@ -1,0 +1,47 @@
+# Hash for the kernel pinned by BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE in
+# sb_enema/configs/sb_enema_defconfig.
+#
+# Why this file exists
+# --------------------
+# Buildroot ships kernel hashes only for the versions it selects itself.  As of
+# 2026.05.1 those live in linux/from-6.17/linux.hash and are reachable only
+# through a linux/<version> symlink, which exists for Buildroot's own default
+# (7.0.11) but not for an arbitrary pin.  A pinned 6.18.x therefore finds no
+# hash file in the Buildroot tree at all.
+#
+# Worse, a custom version is *exempt* from hash checking by default — the
+# opposite of what one might assume.  Both linux/linux.mk and
+# package/linux-headers/linux-headers.mk read
+#     ifeq ($(BR2_LINUX_KERNEL)$(BR2_LINUX_KERNEL_LATEST_VERSION),y)
+#     BR_NO_CHECK_HASH_FOR += $(LINUX_SOURCE)
+# so the skip applies precisely when LATEST_VERSION is NOT set, i.e. to pinned
+# versions.  Buildroot's Config.in says so directly: "Buildroot checks hashes of
+# all packages downloaded, except those for which a custom version is used."
+#
+# So two things are needed, and both are in place:
+#
+#   1. This file.  package/pkg-generic.mk resolves a package's hash files from
+#      pkg-patch-hash-dirs() = the in-tree package dir plus
+#      $(BR2_GLOBAL_PATCH_DIR)/<pkgname>.  Our defconfig points
+#      BR2_GLOBAL_PATCH_DIR at sb_enema/patches, so this is picked up as
+#      sb_enema/patches/linux/linux.hash.  linux-headers downloads the very same
+#      tarball, and sb_enema/patches/linux-headers/linux-headers.hash is a
+#      symlink to this file so the two can never disagree.
+#
+#   2. BR2_DOWNLOAD_FORCE_CHECK_HASHES=y in the defconfig, which blanks
+#      BR_NO_CHECK_HASH_FOR.  Without it, check-hash finds no matching line for
+#      a bumped version, consults the skip list, and exits 0 silently.
+#
+# Keep this in lockstep with the defconfig
+# ----------------------------------------
+# With both of the above, bumping BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE without
+# adding the matching line below fails the build with
+# "ERROR: No hash found for linux-<version>.tar.xz" instead of silently
+# downloading an unverified tarball.  That is intentional — verify it still
+# holds if you change either mechanism.
+#
+# Source: https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
+# (PGP-signed by the kernel.org release signing key; the 6.18.34 entry in that
+# same file matches the hash Buildroot independently ships in
+# linux/from-6.17/linux.hash, which cross-checks the file's authenticity.)
+sha256  3712fc1ec839e4daac981176c8518912e8f452650aaedfe4381da4419613a431  linux-6.18.40.tar.xz

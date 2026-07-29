@@ -6,7 +6,26 @@ SUBMODULE="${SUBMODULE:-${ROOT_DIR}/third_party/secureboot_objects}"
 VENV_DIR="${VENV_DIR:-${ROOT_DIR}/output/secureboot-venv}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-${ROOT_DIR}/output/secureboot-artifacts}"
 STAGING_DIR="${STAGING_DIR:-${ROOT_DIR}/output/secureboot-staging}"
-TEMPLATE_NAME="${TEMPLATE_NAME:-MicrosoftAndThirdParty}"
+
+# Keystore template driving what lands in PK/KEK/db/dbx.
+#
+# This is SB-ENEMA's own template, NOT one of the stock
+# third_party/secureboot_objects/Templates/*.toml.  None of the stock templates
+# fit a recovery tool: the ones that keep "Microsoft Windows Production PCA
+# 2011" in db drop the 2011 KEK, and vice versa.  See the header of
+# SbEnemaRecovery.toml for the full rationale and evidence.
+#
+# Keeping it outside third_party/ means a submodule bump cannot silently change
+# which certificates we enroll.  Override with KEYSTORE=/path/to/other.toml to
+# build a different policy (e.g. one of the stock Microsoft templates).
+KEYSTORE="${KEYSTORE:-${ROOT_DIR}/sb_enema/secureboot-templates/SbEnemaRecovery.toml}"
+
+# secure_boot_default_keys.py names its output directory after the keystore's
+# basename, so TEMPLATE_NAME must be derived from KEYSTORE rather than set
+# independently — otherwise the rsync below reads a path that does not exist.
+TEMPLATE_NAME="$(basename "${KEYSTORE}")"
+TEMPLATE_NAME="${TEMPLATE_NAME%%.*}"
+
 ARCH="${ARCH:-X64}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -14,6 +33,15 @@ if [ ! -d "${SUBMODULE}" ]; then
     echo "Secure Boot objects submodule not found at ${SUBMODULE}" >&2
     exit 1
 fi
+
+if [ ! -f "${KEYSTORE}" ]; then
+    echo "Keystore template not found at ${KEYSTORE}" >&2
+    exit 1
+fi
+
+# The generator runs from the submodule root, so a relative KEYSTORE would
+# resolve against the wrong directory there even though the check above passed.
+KEYSTORE="$(cd "$(dirname "${KEYSTORE}")" && pwd)/$(basename "${KEYSTORE}")"
 
 git -C "${ROOT_DIR}" submodule update --init --recursive third_party/secureboot_objects
 
@@ -24,14 +52,139 @@ fi
 "${VENV_DIR}/bin/pip" install --upgrade pip >/dev/null
 "${VENV_DIR}/bin/pip" install -r "${SUBMODULE}/pip-requirements.txt" >/dev/null
 
+# Verify that every certificate the keystore names still hashes to the values the
+# keystore records.  secure_boot_default_keys.py ignores these fields entirely,
+# so without this they are decorative: a submodule bump that swapped a
+# certificate's contents while keeping its filename would silently change what
+# gets enrolled.  Pinning the template's paths only helps if the bytes behind
+# them are pinned too.
+#
+# sha256 is the integrity anchor.  sha1 is checked as well, but only for
+# consistency with the field Microsoft's template schema uses to document a
+# certificate thumbprint -- SHA-1 is collision-broken and must not be what a
+# supply-chain check rests on.
+echo "Verifying keystore certificate fingerprints..."
+"${PYTHON_BIN}" - "${KEYSTORE}" "${SUBMODULE}" <<'PYEOF'
+import hashlib
+import pathlib
+import sys
+import tomllib
+
+keystore_path, submodule = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+with keystore_path.open("rb") as handle:
+    keystore = tomllib.load(handle)
+
+problems = []
+checked = 0
+for variable, section in keystore.items():
+    for entry in section.get("files", []):
+        path = submodule / entry["path"]
+        if not path.is_file():
+            problems.append(f"{variable}: missing file {entry['path']}")
+            continue
+
+        blob = path.read_bytes()
+
+        # The integrity anchor.
+        expected_sha256 = entry.get("sha256")
+        if expected_sha256 is None:
+            problems.append(
+                f"{variable}: {entry['path']} has no sha256 in the keystore; "
+                f"every entry must pin one"
+            )
+            continue
+        actual_sha256 = hashlib.sha256(blob).hexdigest()
+        if actual_sha256 != expected_sha256.lower():
+            problems.append(
+                f"{variable}: {entry['path']}\n"
+                f"      keystore sha256 {expected_sha256.lower()}\n"
+                f"      file     sha256 {actual_sha256}"
+            )
+
+        # Secondary, non-security check: keeps the sha1 thumbprint field (the
+        # one Microsoft's schema documents) honest. usedforsecurity=False says
+        # explicitly that this is identifier matching, not integrity.
+        expected_sha1 = entry.get("sha1")
+        if expected_sha1 is not None:
+            actual_sha1 = hashlib.new(
+                "sha1", blob, usedforsecurity=False
+            ).hexdigest()
+            if actual_sha1 != f"{expected_sha1:040x}".lower():
+                problems.append(
+                    f"{variable}: {entry['path']} sha1 thumbprint is stale\n"
+                    f"      keystore says 0x{expected_sha1:040X}\n"
+                    f"      file is     0x{actual_sha1.upper()}"
+                )
+        checked += 1
+
+if problems:
+    print("\nERROR: keystore fingerprint mismatch:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+    print(
+        "\nA certificate's contents changed without its sha1 in the keystore "
+        "being updated.\nIf this followed a secureboot_objects bump, review what "
+        "changed before\nupdating the keystore -- this is the check that stops a "
+        "submodule bump from\nsilently altering which certificates get enrolled.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+print(f"  {checked} keystore fingerprint(s) verified")
+PYEOF
+
 mkdir -p "${ARTIFACT_DIR}"
 
 (
+    # The generator resolves every `path` in the keystore relative to its own
+    # working directory, so it must run from the submodule root.  KEYSTORE is
+    # absolute for exactly this reason.
     cd "${SUBMODULE}"
     PYTHONPATH="scripts" "${VENV_DIR}/bin/python" scripts/secure_boot_default_keys.py \
-        --keystore "Templates/${TEMPLATE_NAME}.toml" \
+        --keystore "${KEYSTORE}" \
         -o "${ARTIFACT_DIR}"
 )
+
+# Microsoft's generator emits image hashes only; the certificates and svns lists
+# in dbx_info_msft_latest.json are silently dropped.  A keystore can opt back
+# into them, which is what distinguishes the hardened profile from the default
+# recovery one.  Read those flags out of the keystore and act on them here,
+# before the policy guard runs, so the guard validates the final artifact.
+FIRMWARE_OUT="${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware"
+DBX_FLAGS=$("${PYTHON_BIN}" - "${KEYSTORE}" <<'PYEOF'
+import pathlib, sys, tomllib
+with pathlib.Path(sys.argv[1]).open("rb") as handle:
+    dbx = tomllib.load(handle).get("DBX", {})
+flags = []
+if dbx.get("include_certificates"):
+    flags.append("--certificates")
+if dbx.get("include_svns"):
+    flags.append("--svns")
+print(" ".join(flags))
+PYEOF
+)
+
+if [ -n "${DBX_FLAGS}" ]; then
+    echo "Appending certificate-class/SVN revocations to dbx..."
+    # shellcheck disable=SC2086  # DBX_FLAGS is a deliberate list of flags
+    "${PYTHON_BIN}" "${ROOT_DIR}/scripts/append-dbx-revocations.py" \
+        "${FIRMWARE_OUT}/DBX.bin" \
+        "${SUBMODULE}/PreSignedObjects/DBX/dbx_info_msft_latest.json" \
+        "${SUBMODULE}/PreSignedObjects" \
+        ${DBX_FLAGS}
+    POLICY_PROFILE="hardened"
+else
+    POLICY_PROFILE="recovery"
+fi
+
+# Fail the build before staging anything if the generated key set violates the
+# certificate-policy invariants (see check-secureboot-policy.py for what and why).
+echo "Checking Secure Boot certificate policy invariants..."
+"${PYTHON_BIN}" "${ROOT_DIR}/scripts/check-secureboot-policy.py" \
+    "${FIRMWARE_OUT}/DB.bin" \
+    "${FIRMWARE_OUT}/DBX.bin" \
+    "${FIRMWARE_OUT}/KEK.bin" \
+    --profile "${POLICY_PROFILE}"
 
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/secureboot_artifacts"

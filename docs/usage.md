@@ -2,6 +2,13 @@
 
 ## Prerequisites
 - Host tools: `curl`, `openssl`, `mkfs.fat` (from `dosfstools`), `tar`, `rsync`, `sudo`, `python3-venv`, `git` with submodule support (GitHub Actions workflows install these automatically).
+- **GNU coreutils `install`.** Buildroot refuses to build when `/usr/bin/install` is the uutils reimplementation, because of a bug that corrupts installed files ([uutils/coreutils#12166](https://github.com/uutils/coreutils/issues/12166)). Ubuntu 26.04 and other recent distributions ship uutils as the default, so the build stops early with `You have an uutils 'install' version installed`. Check with `install --version`; if it reports uutils, switch to the GNU one:
+
+  ```sh
+  sudo update-alternatives --install /usr/bin/install install /usr/bin/gnuinstall 100
+  ```
+
+  The CI and release workflows do this automatically.
 
 ## Build steps
 ```sh
@@ -30,14 +37,18 @@ Artifacts are written to `output/br-out/images/`, including `sb-enema.img` (hybr
 
 Many systems wipe `KEK` and `db` before the tool runs. `KEKDefault` and `dbDefault` are read-only NVRAM variables that the firmware preserves as factory defaults. The **Stage vendor default entries** operation reads those variables and stages certificates that:
 
-1. Have a SHA-1 fingerprint present in `kek_update_map.json` — the Microsoft OEM vendor PK → KEK update map from the `secureboot_objects` submodule. Only certs recognized by Microsoft as legitimate vendor PKs are staged.
-2. Are **not** flagged as test/placeholder certificates in `known-certs/known-test-pks.txt`.
-3. Are **not** known Microsoft-owned certs (handled separately by the Microsoft staging steps).
+1. Are **not** flagged as test/placeholder certificates in `known-certs/known-test-pks.txt` — boards genuinely ship things like `DO NOT TRUST - AMI Test PK`, and those must never be re-enrolled.
+2. Are **not** known Microsoft-owned certs (handled separately by the Microsoft staging steps, so staging them here would duplicate them).
+
+These certificates come from read-only firmware NVRAM that the OEM populated at the factory, so the baseline is trustworthy by construction; the two checks exist to drop placeholders and avoid duplication, not to establish trust.
+
+> **Note:** earlier versions added a third criterion — the certificate's SHA-1 had to appear as a key in `kek_update_map.json`. That was a type error. The map is keyed on *Platform Key* fingerprints (one entry per OEM platform, mapping a vendor PK to that platform's KEK update package), while the certificates being tested are `KEKDefault`/`dbDefault` members, which are KEK and db certificates rather than PKs. They essentially never matched, so nearly every OEM certificate was discarded and the operation was close to a no-op. The map is now used for what it is actually for: recognising the platform from its PK, recorded in the log for provenance.
 
 Matching `KEKDefault` certs are staged under `PAYLOAD_DIR/KEK/`; matching `dbDefault` certs are staged under `PAYLOAD_DIR/db/`. This step is available as a standalone advanced operation (menu option [9]) and is **not** run automatically by the Full Colonic workflow — combine it manually when you need to preserve recognized OEM entries alongside a user PK/KEK enrollment.
 
 ## Customization
 - Provide your own PK/KEK keypairs by pre-placing `PK.key`, `PK.crt`, `KEK.key`, `KEK.crt` under `sb_enema/board/sb-enema/data-seed/sb-enema/keys/` before building, or directly on the USB’s `SB-ENEMA` partition at `sb-enema/keys/`. `keygen_generate_keys()` skips generation when the files already exist. See `data-seed/README.txt` for the complete partition layout.
-- The Secure Boot payloads are generated from the `third_party/secureboot_objects` submodule (template defaults to `MicrosoftAndThirdParty`). Adjust `TEMPLATE_NAME` or `ARCH` when running `scripts/prepare-secureboot-objects.sh` to use a different template/architecture.
+- The Secure Boot payloads are generated from the certificates in the `third_party/secureboot_objects` submodule, driven by SB-ENEMA's own keystore template at `sb_enema/secureboot-templates/SbEnemaRecovery.toml`. That template deliberately lives outside `third_party/` so that a submodule bump cannot silently change which certificates get enrolled; it carries both the 2011 and 2023 certificate generations in `db` and `KEK`, and its header documents why each entry is there. Override with `KEYSTORE=/path/to/other.toml` (or `ARCH=...`) when running `scripts/prepare-secureboot-objects.sh` — for example to build against one of the stock Microsoft templates in `third_party/secureboot_objects/Templates/`.
+  - Note that `scripts/check-secureboot-policy.py` runs as part of that script and will reject a key set whose `db` omits a compatibility-critical certificate, or whose `dbx` revokes a certificate that `db` depends on. If you intentionally build a narrower policy (e.g. `MicrosoftOnly`), expect that check to fail — that is the guard doing its job, not a bug.
 - To regenerate payloads without a full Buildroot build, run `scripts/prepare-secureboot-objects.sh` directly.
 - Adjust Buildroot defaults in `sb_enema/configs/sb_enema_defconfig`, and edit kernel/BusyBox fragments in `sb_enema/board/sb-enema/kernel-fragment.config` and `sb_enema/board/sb-enema/busybox-fragment.config`.

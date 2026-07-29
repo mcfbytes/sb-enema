@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   shellcheck:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -29,3 +29,38 @@ jobs:
           scandir: .
           severity: warning
           ignore_paths: third_party
+
+  # The scripts/test-*.sh suite exercises the runtime enrollment logic in
+  # sb_enema/board/sb-enema/rootfs-overlay/, which the build workflow
+  # deliberately excludes via paths-ignore.  Without this job those tests never
+  # run in CI — including test-cert-policy.sh, which is the guard against
+  # silently dropping a certificate that machines need in order to boot.
+  unit-tests:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # test-cert-policy.sh reads the real Microsoft certificates out of the
+          # secureboot_objects submodule; without it the test skips itself.
+          submodules: recursive
+
+      - name: Run test suite
+        run: |
+          status=0
+          for test in scripts/test-*.sh; do
+            echo "::group::${test}"
+            if bash "${test}"; then
+              echo "${test}: PASS"
+            else
+              echo "::error file=${test}::${test} failed"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${status}"
