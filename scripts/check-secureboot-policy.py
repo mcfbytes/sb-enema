@@ -27,7 +27,18 @@ TBSCertificate (which is what firmware actually uses to revoke a CA).  Any dbx
 entry type this tool does not recognise is treated as a failure rather than
 ignored, so the guard cannot fail open on an encoding added later.
 
-Usage: check-secureboot-policy.py <DB.bin> <DBX.bin> [KEK.bin]
+Profiles
+--------
+recovery (default)
+    The compatibility-critical 2011 certificates MUST be present in db.
+
+hardened
+    They must be ABSENT, because the hardened keystore also enrolls the
+    certificate-class revocation for them. The db/dbx collision check below is
+    what actually keeps the two halves coherent; the profile only selects which
+    presence rule applies.
+
+Usage: check-secureboot-policy.py <DB.bin> <DBX.bin> [KEK.bin] [--profile NAME]
 Exit codes: 0 ok, 1 invariant violated, 2 usage/parse error.
 """
 
@@ -185,9 +196,23 @@ def load_esl(path: Path):
 
 
 def main(argv: list[str]) -> int:
+    argv = list(argv)
+    profile = "recovery"
+    if "--profile" in argv:
+        index = argv.index("--profile")
+        if index + 1 >= len(argv):
+            print("ERROR: --profile requires a value", file=sys.stderr)
+            return 2
+        profile = argv[index + 1]
+        del argv[index:index + 2]
+    if profile not in ("recovery", "hardened"):
+        print(f"ERROR: unknown profile {profile!r}", file=sys.stderr)
+        return 2
+
     if not 3 <= len(argv) <= 4:
         print(
-            f"usage: {Path(argv[0]).name} <DB.bin> <DBX.bin> [KEK.bin]",
+            f"usage: {Path(argv[0]).name} <DB.bin> <DBX.bin> [KEK.bin] "
+            f"[--profile recovery|hardened]",
             file=sys.stderr,
         )
         return 2
@@ -246,11 +271,14 @@ def main(argv: list[str]) -> int:
     }
 
     print(
+        f"  profile: {profile}\n"
         f"  db:  {len(db_certs)} certificate(s)\n"
         f"  kek: {len(kek_certs)} certificate(s)"
         + ("" if kek_path else " (not checked)")
+        # SHA-256 entries cover both image hashes and SVN floor markers, which
+        # share the EFI_CERT_SHA256 type, so they are counted together.
         + f"\n  dbx: {len(dbx_certs)} certificate entr(ies), "
-        f"{dbx_tbs_count} TBS-hash revocation(s), {dbx_hashes} image hash(es)"
+        f"{dbx_tbs_count} TBS-hash revocation(s), {dbx_hashes} SHA-256 entr(ies)"
     )
 
     failures = []
@@ -277,15 +305,25 @@ def main(argv: list[str]) -> int:
                 f"signed by that CA would stop booting."
             )
 
-    # 2. Hard failure: a compatibility-critical certificate is missing.
-    #    Catches a template edit or submodule bump that silently drops one.
-    for fingerprint, name in COMPAT_CRITICAL_DB_CERTS.items():
-        if fingerprint not in db_certs:
-            failures.append(
-                f"'{name}' is missing from db. It is required so that "
-                f"pre-2023-signed boot managers, install media and option ROMs "
-                f"keep booting after re-provisioning."
-            )
+    # 2. Presence rule for the compatibility-critical certificates, which is
+    #    what the profile selects.
+    if profile == "recovery":
+        # Catches a template edit or submodule bump that silently drops one.
+        for fingerprint, name in COMPAT_CRITICAL_DB_CERTS.items():
+            if fingerprint not in db_certs:
+                failures.append(
+                    f"'{name}' is missing from db. The recovery profile requires "
+                    f"it so that pre-2023-signed boot managers, install media and "
+                    f"option ROMs keep booting after re-provisioning. If this is "
+                    f"deliberate, build with --profile hardened and read what that "
+                    f"profile stops booting."
+                )
+    else:
+        # Hardened imposes no presence requirement: dropping those certificates
+        # is the whole point of the profile. Coherence between db and dbx is
+        # already enforced by the collision checks above, which fire if a
+        # certificate is both trusted and revoked.
+        pass
 
     if kek_path:
         for fingerprint, name in COMPAT_CRITICAL_KEK_CERTS.items():

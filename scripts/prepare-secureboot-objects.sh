@@ -145,13 +145,46 @@ mkdir -p "${ARTIFACT_DIR}"
         -o "${ARTIFACT_DIR}"
 )
 
+# Microsoft's generator emits image hashes only; the certificates and svns lists
+# in dbx_info_msft_latest.json are silently dropped.  A keystore can opt back
+# into them, which is what distinguishes the hardened profile from the default
+# recovery one.  Read those flags out of the keystore and act on them here,
+# before the policy guard runs, so the guard validates the final artifact.
+FIRMWARE_OUT="${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware"
+DBX_FLAGS=$("${PYTHON_BIN}" - "${KEYSTORE}" <<'PYEOF'
+import pathlib, sys, tomllib
+with pathlib.Path(sys.argv[1]).open("rb") as handle:
+    dbx = tomllib.load(handle).get("DBX", {})
+flags = []
+if dbx.get("include_certificates"):
+    flags.append("--certificates")
+if dbx.get("include_svns"):
+    flags.append("--svns")
+print(" ".join(flags))
+PYEOF
+)
+
+if [ -n "${DBX_FLAGS}" ]; then
+    echo "Appending certificate-class/SVN revocations to dbx..."
+    # shellcheck disable=SC2086  # DBX_FLAGS is a deliberate list of flags
+    "${PYTHON_BIN}" "${ROOT_DIR}/scripts/append-dbx-revocations.py" \
+        "${FIRMWARE_OUT}/DBX.bin" \
+        "${SUBMODULE}/PreSignedObjects/DBX/dbx_info_msft_latest.json" \
+        "${SUBMODULE}/PreSignedObjects" \
+        ${DBX_FLAGS}
+    POLICY_PROFILE="hardened"
+else
+    POLICY_PROFILE="recovery"
+fi
+
 # Fail the build before staging anything if the generated key set violates the
 # certificate-policy invariants (see check-secureboot-policy.py for what and why).
 echo "Checking Secure Boot certificate policy invariants..."
 "${PYTHON_BIN}" "${ROOT_DIR}/scripts/check-secureboot-policy.py" \
-    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/DB.bin" \
-    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/DBX.bin" \
-    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/KEK.bin"
+    "${FIRMWARE_OUT}/DB.bin" \
+    "${FIRMWARE_OUT}/DBX.bin" \
+    "${FIRMWARE_OUT}/KEK.bin" \
+    --profile "${POLICY_PROFILE}"
 
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/secureboot_artifacts"

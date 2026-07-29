@@ -37,9 +37,12 @@ Artifacts are written to `output/br-out/images/`, including `sb-enema.img` (hybr
 
 Many systems wipe `KEK` and `db` before the tool runs. `KEKDefault` and `dbDefault` are read-only NVRAM variables that the firmware preserves as factory defaults. The **Stage vendor default entries** operation reads those variables and stages certificates that:
 
-1. Have a SHA-1 fingerprint present in `kek_update_map.json` — the Microsoft OEM vendor PK → KEK update map from the `secureboot_objects` submodule. Only certs recognized by Microsoft as legitimate vendor PKs are staged.
-2. Are **not** flagged as test/placeholder certificates in `known-certs/known-test-pks.txt`.
-3. Are **not** known Microsoft-owned certs (handled separately by the Microsoft staging steps).
+1. Are **not** flagged as test/placeholder certificates in `known-certs/known-test-pks.txt` — boards genuinely ship things like `DO NOT TRUST - AMI Test PK`, and those must never be re-enrolled.
+2. Are **not** known Microsoft-owned certs (handled separately by the Microsoft staging steps, so staging them here would duplicate them).
+
+These certificates come from read-only firmware NVRAM that the OEM populated at the factory, so the baseline is trustworthy by construction; the two checks exist to drop placeholders and avoid duplication, not to establish trust.
+
+> **Note:** earlier versions added a third criterion — the certificate's SHA-1 had to appear as a key in `kek_update_map.json`. That was a type error. The map is keyed on *Platform Key* fingerprints (one entry per OEM platform, mapping a vendor PK to that platform's KEK update package), while the certificates being tested are `KEKDefault`/`dbDefault` members, which are KEK and db certificates rather than PKs. They essentially never matched, so nearly every OEM certificate was discarded and the operation was close to a no-op. The map is now used for what it is actually for: recognising the platform from its PK, recorded in the log for provenance.
 
 Matching `KEKDefault` certs are staged under `PAYLOAD_DIR/KEK/`; matching `dbDefault` certs are staged under `PAYLOAD_DIR/db/`. This step is available as a standalone advanced operation (menu option [9]) and is **not** run automatically by the Full Colonic workflow — combine it manually when you need to preserve recognized OEM entries alongside a user PK/KEK enrollment.
 

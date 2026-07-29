@@ -23,7 +23,7 @@ Produce a minimal Buildroot-based USB image for reprovisioning UEFI Secure Boot 
 2. `sb-enema`:
    - Runs an audit/report, then offers Quick Actions (Full Colonic, Microsoft Colonic, Microsoft Suppository) and individual Staging operations.
    - Microsoft payloads are sourced from `/mnt/data/sb-enema/payloads/microsoft/` (pre-built `.auth` files staged at build time); custom mode generates PK/KEK locally via `keygen_generate_keys()`, builds ESLs for PK/KEK/db/dbx, signs them, and applies them with `efi-updatevar`.
-   - The **Stage vendor default entries** option (`stage_bios_entries`) reads `KEKDefault` and `dbDefault` EFI variables (the firmware's factory-installed Secure Boot certs, preserved even after the user wipes KEK/db) and stages only those certs whose SHA-1 fingerprint appears in `kek_update_map.json` (recognized OEM vendor PKs), while excluding known test certificates (checked against `known-certs/known-test-pks.txt`) and known Microsoft-owned certs.
+   - The **Stage vendor default entries** option (`stage_bios_entries`) reads `KEKDefault` and `dbDefault` EFI variables (the firmware's factory-installed Secure Boot certs, preserved even after the user wipes KEK/db) and stages them, excluding known test/placeholder certificates (`known-certs/known-test-pks.txt`) and known Microsoft-owned certs (staged separately). `kek_update_map.json` is keyed on Platform Key fingerprints, so it is used to recognise the platform from its PK for provenance logging — not to filter individual `KEKDefault`/`dbDefault` members, which are KEK/db certificates and would never match.
    - Logs actions to `/mnt/data/sb-enema/logs/`.
 
 ## Build pipeline

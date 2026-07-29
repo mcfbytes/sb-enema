@@ -41,8 +41,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the warning matters most on exactly the custom-owned machines that earlier
   releases mis-provisioned.
 
+- **`stage_bios_entries()` discarded almost every OEM certificate.** It gated
+  each `KEKDefault`/`dbDefault` member on its SHA-1 appearing as a key in
+  `kek_update_map.json`, but that map is keyed on *Platform Key* fingerprints —
+  one entry per OEM platform, mapping a vendor PK to that platform's KEK update
+  package. The certificates being tested are KEK and db certificates, not PKs,
+  so they essentially never matched and the operation was close to a no-op.
+  That silently destroyed the vendor trust anchors it exists to preserve,
+  breaking OEM recovery tooling (HP Sure Recover, Dell SupportAssist OS
+  Recovery, Lenovo UEFI diagnostics) and OEM-signed option ROMs. Staging now
+  rests on the two checks that were always correct — reject known
+  test/placeholder certificates, skip Microsoft-owned ones — and the map is
+  used for what it is actually for: recognising the platform from its PK,
+  logged for provenance. Covered by `scripts/test-bios-entries.sh`.
+
 ### Added
 
+- **Opt-in hardened profile**
+  (`sb_enema/secureboot-templates/SbEnemaHardened.toml` plus
+  `scripts/append-dbx-revocations.py`): enrolls the certificate-class and SVN
+  revocations that Microsoft publishes in `dbx_info_msft_latest.json` but which
+  its own converter drops — it emits image hashes only. **Not the default, and
+  it is dangerous on an unmigrated machine**: it revokes Windows Production PCA
+  2011 and sets an SVN floor on the Windows Boot Manager, so an installation
+  that has not completed the 2023 migration, or media created before it, will
+  not boot. Microsoft ships the equivalent only as the optional `DBXUpdate2024`
+  package with the same warning. Because a `dbx` match beats a `db` match, the
+  profile necessarily also drops the 2011 certificates from `db`;
+  `check-secureboot-policy.py` gained a `--profile` switch and fails the build
+  on any incoherent combination of the two halves.
 - **SB-ENEMA keystore template**
   (`sb_enema/secureboot-templates/SbEnemaRecovery.toml`): the certificate set
   is now defined by a repo-owned template rather than one of the stock

@@ -356,6 +356,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Test 5: the hardened profile and its coupling to db
+# ---------------------------------------------------------------------------
+echo
+echo "--- Test 5: hardened profile couples dbx revocations to db removals ---"
+
+HARDENED="${REPO_ROOT}/sb_enema/secureboot-templates/SbEnemaHardened.toml"
+APPENDER="${REPO_ROOT}/scripts/append-dbx-revocations.py"
+
+if [[ ! -f "${HARDENED}" ]]; then
+    fail "hardened template not found at ${HARDENED}"
+elif [[ ! -f "${APPENDER}" ]]; then
+    fail "append-dbx-revocations.py not found at ${APPENDER}"
+else
+    hardened_report=$(python3 - "${HARDENED}" <<'PYEOF'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    ks = tomllib.load(fh)
+db = {f["path"].split("/")[-1] for f in ks["DB"]["files"]}
+banned = {"MicWinProPCA2011_2011-10-19.der", "MicCorUEFCA2011_2011-06-27.der"}
+problems = []
+if db & banned:
+    problems.append(f"hardened db still trusts revoked/legacy certs: {sorted(db & banned)}")
+if not ks.get("DBX", {}).get("include_certificates"):
+    problems.append("hardened DBX does not set include_certificates")
+if not ks.get("DBX", {}).get("include_svns"):
+    problems.append("hardened DBX does not set include_svns")
+print("\n".join(problems) if problems else "OK")
+PYEOF
+)
+    if [[ "${hardened_report}" == "OK" ]]; then
+        pass "SbEnemaHardened.toml enables extra revocations and drops the 2011 db certs"
+    else
+        fail "SbEnemaHardened.toml is incoherent:"
+        echo "${hardened_report}" >&2
+    fi
+
+    # Build a hardened-style dbx (image hashes + the PCA 2011 TBS revocation)
+    # and confirm it is rejected against a db that still trusts that CA. This is
+    # the combination that would brick a machine, so it must never build.
+    python3 "${APPENDER}" "${WORKDIR}/DBX-ok.bin" \
+        "${MOCK_DATA}/PreSignedObjects/DBX/dbx_info_msft_latest.json" \
+        "${MOCK_DATA}/PreSignedObjects" --certificates --svns >/dev/null 2>&1 || true
+
+    policy_rc=0
+    policy_out=$(python3 "${POLICY_CHECK}" "${WORKDIR}/DB.bin" "${WORKDIR}/DBX-ok.bin" 2>&1) || policy_rc=$?
+    if [[ "${policy_rc}" -eq 1 ]]; then
+        pass "recovery db + hardened dbx is rejected (would brick unmigrated Windows)"
+    else
+        fail "expected exit 1 for recovery db against hardened dbx, got ${policy_rc}"
+        echo "${policy_out}" >&2
+    fi
+fi
+
 echo
 echo "=== Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed ==="
 [[ "${FAIL_COUNT}" -eq 0 ]]
