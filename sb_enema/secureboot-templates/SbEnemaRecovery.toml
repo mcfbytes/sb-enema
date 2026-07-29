@@ -150,5 +150,5 @@ help = "Microsoft's revocation list, filtered per architecture."
 # real one.
 [[DBX.files]]
 path = "PreSignedObjects/DBX/dbx_info_msft_latest.json"
-sha1 = 0x7D0552967FAECE191ED1BE2262C8B2EEE5EB3D15
+sha1 = 0x08C2CF1601BDC27A6116FE43087403D1135755A4
 signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"

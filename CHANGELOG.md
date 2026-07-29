@@ -82,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`third_party/secureboot_objects` → v1.6.5**, bringing 12 new x64 and 1 new
+  ia32 image revocations into `dbx` (431 → 443 x64 hashes). The bump was gated
+  by the new keystore fingerprint check, and the resulting `dbx` was reviewed
+  before the hash was refreshed: `svns` is unchanged, and `certificates` still
+  holds exactly one entry (the PCA 2011 CVE-2023-24932 record, which the
+  upstream converter does not render into the ESL) — so the db policy invariant
+  above still holds.
 - **Buildroot 2026.02.3 → 2026.05.1.**
 - **Kernel pinned to 6.18.40 longterm** via `BR2_LINUX_KERNEL_CUSTOM_VERSION`,
   replacing Buildroot's default (`BR2_LINUX_KERNEL_LATEST_VERSION`, which is
