@@ -29,7 +29,7 @@ Artifacts are written to `output/br-out/images/`, including `sb-enema.img` (hybr
 | Menu | CLI operation | What it does |
 |------|---------------|--------------|
 | **[2] Full Colonic** | `full-colonic` | Generate user PK/KEK → enroll Microsoft db/dbx under user KEK. Clean slate; OEM chain replaced. |
-| **[3] Microsoft Colonic** | `microsoft-colonic` | Install Microsoft PK → KEK → db/dbx chain (untested on all firmware). |
+| **[3] Microsoft Colonic** | `microsoft-colonic` | Install Microsoft PK → KEK → db/dbx chain. **Does not work under QEMU/OVMF** — see [why](microsoft-pk-ovmf.md); KEK/db/dbx still enroll, only the PK write fails. |
 | **[4] Microsoft Suppository** | `microsoft-suppository` | Keep existing PK; add missing Microsoft KEK/db/dbx. |
 | **[9] Stage vendor default entries** | `stage-bios-entries` | Read `KEKDefault`/`dbDefault` EFI variables and stage recognized OEM vendor certs (see below). |
 

@@ -9,53 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Certificate policy: stop dropping certificates that machines need in order
-  to boot.** Both enrollment paths previously removed Microsoft certificates on
-  the grounds that they expire in 2026. Both removals were wrong, because UEFI
-  image verification never checks certificate validity dates (the spec's
-  authorization process has no expiry step, and EDK II's `Pkcs7Verify()` passes
-  `X509_V_FLAG_NO_CHECK_TIME`). Revocation is expressed through `dbx` alone.
-  - `Microsoft Windows Production PCA 2011` is enrolled in `db` again. It signs
-    the Windows Boot Manager on any installation that has not yet received
-    Microsoft's 2023-signed boot manager — a staged rollout still incomplete as
-    of mid-2026 — plus WinRE and pre-migration install media. Without it, a
-    re-provisioned machine could no longer Secure-Boot the Windows install that
-    was working before the tool ran. Affected the Microsoft path (via the
-    `MicrosoftAndThirdParty` template) and the custom-PK path (via a
-    fingerprint filter in `_stage_build_db_esl`).
-  - `Microsoft Corporation KEK CA 2011` is enrolled in `KEK` again. Every
-    Microsoft Secure Boot servicing package published to date is signed under
-    it, not the 2023 KEK — verifiable from the PKCS#7 signer of
-    `PostSignedObjects/DBX/*/DBXUpdate.bin` in the submodule. Excluding it left
-    the machine unable to apply any existing Microsoft `dbx` revocation update.
-    Affected the custom-PK path (`_stage_build_kek_esl`).
-- **`audit.sh` reported the missing certificates as expected.** Absence of
-  `Microsoft Windows Production PCA 2011` from `db` was logged as `INFO`
-  ("expected absent in current provisioning"); it is now a `WARNING` naming the
-  boot-failure consequence. A matching warning was added for a missing
-  `Microsoft KEK CA 2011`. Neither is gated on whether the user runs their own
-  KEK chain: a user-owned KEK lets the *user* sign db/dbx updates, but does
-  nothing to make Microsoft's published, 2011-KEK-signed updates verify — so
-  the warning matters most on exactly the custom-owned machines that earlier
-  releases mis-provisioned.
-
-- **`stage_bios_entries()` discarded almost every OEM certificate.** It gated
-  each `KEKDefault`/`dbDefault` member on its SHA-1 appearing as a key in
-  `kek_update_map.json`, but that map is keyed on *Platform Key* fingerprints —
-  one entry per OEM platform, mapping a vendor PK to that platform's KEK update
-  package. The certificates being tested are KEK and db certificates, not PKs,
-  so they essentially never matched and the operation was close to a no-op.
-  That silently destroyed the vendor trust anchors it exists to preserve,
-  breaking OEM recovery tooling (HP Sure Recover, Dell SupportAssist OS
-  Recovery, Lenovo UEFI diagnostics) and OEM-signed option ROMs. Staging now
-  rests on the two checks that were always correct — reject known
-  test/placeholder certificates, skip Microsoft-owned ones — and the map is
-  used for what it is actually for: recognising the platform from its PK,
-  logged for provenance. Covered by `scripts/test-bios-entries.sh`.
-
 ### Added
+
+- **The QEMU test now covers the Microsoft payload chain**
+  (`scripts/qemu-enroll-test.sh` gained a `microsoft-chain` scenario running
+  `microsoft-suppository`). It asserts Microsoft's own pre-signed KEK/db/dbx
+  payloads enroll and that the firmware variable store ends up with all five db
+  certificates and both KEKs — the same payloads `microsoft-colonic` uses, so
+  the certificate policy is now covered on both main paths. 33 assertions
+  across the two scenarios.
 
 - **Opt-in hardened profile**
   (`sb_enema/secureboot-templates/SbEnemaHardened.toml` plus
@@ -123,12 +85,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell rather than auto-starting the menu, since two concurrent instances
   raced to mount efivarfs.
 
-### Fixed (runtime)
+- **Audit engine** (`audit.sh`): detects test/invalid PKs, validates certificate
+  expiry, checks 2026 db/dbx readiness, and classifies the current ownership
+  model (vendor, Microsoft, custom, or test).
+- **Health report** (`report.sh`): severity-graded, color-coded per-variable
+  status display with per-certificate fingerprint details.
+- **Custom Owner Mode enrollment** (`enroll-custom.sh`): generates a fresh
+  PK/KEK pair, stores private keys on the exFAT partition, and enrolls
+  Microsoft's db/dbx under the new KEK.
+- **Microsoft PK Recovery Mode** (`enroll-microsoft.sh`): installs the full
+  Microsoft PK → KEK → db/dbx chain using pre-built, Microsoft-supplied
+  `.auth` payloads.
+- **Change preview** (`preview.sh`): shows an ADD/REMOVE/KEEP diff per EFI
+  variable and requires explicit confirmation before any write.
+- **Delta computation** (`update.sh`): computes per-variable cert-level deltas
+  (ADD/REMOVE/KEEP arrays) against the current EFI variable state.
+- **Structured audit log** (`log.sh`): pipe-delimited, timestamped action log
+  written to `${DATA_MOUNT}/sb-enema/logs/`.
+- **EFI variable reader** (`efivar.sh`): thin wrapper around `efi-readvar` for
+  listing and extracting Secure Boot EFI variables.
+- **Certificate fingerprint database** (`certdb.sh`, `known-certs/`): maps
+  fingerprints to human-readable vendor/cert names for audit output.
+- **Safety checks** (`safety.sh`): Setup Mode assertion, battery check, and
+  payload integrity verification before any PK write.
+- **Interactive menu and CLI mode** (`/usr/sbin/sb-enema`): 6-option menu plus
+  positional `OPERATION` argument (e.g., `sb-enema report|custom|microsoft|...`)
+  for scripted use; both paths share the same operation functions.
+- **Buildroot external tree** (`sb_enema/`): minimal x86_64 Linux image with
+  `efitools`, hybrid GPT image (FAT32 EFI + exFAT data partition).
+- **Build-time payload staging** (`scripts/`): `prepare-secureboot-objects.sh`
+  copies Microsoft `.auth` payloads into the image; `post-image.sh` rsyncs
+  the data partition.
 
-- **`mount_efivars()` could abort on a benign race.** Its `mountpoint` check is
-  not atomic, so a second process mounting efivarfs in between made the loser
-  fail with `Device or resource busy` and abort the whole run. It now re-checks
-  after a failed mount and continues if the filesystem is present.
+> This is the initial release. All features listed above are new.
+> Development made extensive use of GitHub Copilot and generative AI.
 
 ### Changed
 
@@ -168,45 +158,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation first. Documented in `docs/usage.md` for local builds, which
   hit the same wall on any uutils-based distribution.
 
-### Added
-
-- **Audit engine** (`audit.sh`): detects test/invalid PKs, validates certificate
-  expiry, checks 2026 db/dbx readiness, and classifies the current ownership
-  model (vendor, Microsoft, custom, or test).
-- **Health report** (`report.sh`): severity-graded, color-coded per-variable
-  status display with per-certificate fingerprint details.
-- **Custom Owner Mode enrollment** (`enroll-custom.sh`): generates a fresh
-  PK/KEK pair, stores private keys on the exFAT partition, and enrolls
-  Microsoft's db/dbx under the new KEK.
-- **Microsoft PK Recovery Mode** (`enroll-microsoft.sh`): installs the full
-  Microsoft PK → KEK → db/dbx chain using pre-built, Microsoft-supplied
-  `.auth` payloads.
-- **Change preview** (`preview.sh`): shows an ADD/REMOVE/KEEP diff per EFI
-  variable and requires explicit confirmation before any write.
-- **Delta computation** (`update.sh`): computes per-variable cert-level deltas
-  (ADD/REMOVE/KEEP arrays) against the current EFI variable state.
-- **Structured audit log** (`log.sh`): pipe-delimited, timestamped action log
-  written to `${DATA_MOUNT}/sb-enema/logs/`.
-- **EFI variable reader** (`efivar.sh`): thin wrapper around `efi-readvar` for
-  listing and extracting Secure Boot EFI variables.
-- **Certificate fingerprint database** (`certdb.sh`, `known-certs/`): maps
-  fingerprints to human-readable vendor/cert names for audit output.
-- **Safety checks** (`safety.sh`): Setup Mode assertion, battery check, and
-  payload integrity verification before any PK write.
-- **Interactive menu and CLI mode** (`/usr/sbin/sb-enema`): 6-option menu plus
-  positional `OPERATION` argument (e.g., `sb-enema report|custom|microsoft|...`)
-  for scripted use; both paths share the same operation functions.
-- **Buildroot external tree** (`sb_enema/`): minimal x86_64 Linux image with
-  `efitools`, hybrid GPT image (FAT32 EFI + exFAT data partition).
-- **Build-time payload staging** (`scripts/`): `prepare-secureboot-objects.sh`
-  copies Microsoft `.auth` payloads into the image; `post-image.sh` rsyncs
-  the data partition.
-
-> This is the initial release. All features listed above are new.
-> Development made extensive use of GitHub Copilot and generative AI.
-
-### Changed
-
 - **`stage_bios_entries()`** now reads from `KEKDefault` and `dbDefault` EFI
   variables instead of the live `KEK` and `db` variables. Since users may have
   wiped `KEK`/`db` prior to running the tool, the firmware-preserved default
@@ -232,6 +183,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-### Security
+- **Diagnosed why the Microsoft-owned PK cannot enroll under QEMU/OVMF, and
+  stopped mis-reporting it.** OVMF requires a PK update to be signed by the
+  private key of the certificate inside it; Microsoft's PK cannot satisfy that,
+  since only Microsoft holds that key. Measured directly: the same ESL signed
+  by a foreign key is rejected with `EFI_SECURITY_VIOLATION` while the
+  self-signed version is accepted, on all three secure-boot OVMF images the
+  `ovmf` package ships. The existing throwaway-resign fallback therefore cannot
+  help on such firmware, and never could. This is not a defect in SB-ENEMA and
+  does not affect real AMI/Insyde hardware, where the flow works.
+  - efitools surfaces the rejection as `Cannot write to PK, wrong filesystem
+    permissions`, which is doubly misleading — it is efitools' own string,
+    printed for the `EACCES` the kernel returns for
+    `EFI_SECURITY_VIOLATION`. The tool now explains the real cause and points
+    at Full Colonic or Microsoft Suppository instead of leaving the operator
+    chasing a filesystem error.
+  - Written up with the measurements in `docs/microsoft-pk-ovmf.md`; the menu
+    text no longer implies the retry is a general recovery.
+
+- **Certificate policy: stop dropping certificates that machines need in order
+  to boot.** Both enrollment paths previously removed Microsoft certificates on
+  the grounds that they expire in 2026. Both removals were wrong, because UEFI
+  image verification never checks certificate validity dates (the spec's
+  authorization process has no expiry step, and EDK II's `Pkcs7Verify()` passes
+  `X509_V_FLAG_NO_CHECK_TIME`). Revocation is expressed through `dbx` alone.
+  - `Microsoft Windows Production PCA 2011` is enrolled in `db` again. It signs
+    the Windows Boot Manager on any installation that has not yet received
+    Microsoft's 2023-signed boot manager — a staged rollout still incomplete as
+    of mid-2026 — plus WinRE and pre-migration install media. Without it, a
+    re-provisioned machine could no longer Secure-Boot the Windows install that
+    was working before the tool ran. Affected the Microsoft path (via the
+    `MicrosoftAndThirdParty` template) and the custom-PK path (via a
+    fingerprint filter in `_stage_build_db_esl`).
+  - `Microsoft Corporation KEK CA 2011` is enrolled in `KEK` again. Every
+    Microsoft Secure Boot servicing package published to date is signed under
+    it, not the 2023 KEK — verifiable from the PKCS#7 signer of
+    `PostSignedObjects/DBX/*/DBXUpdate.bin` in the submodule. Excluding it left
+    the machine unable to apply any existing Microsoft `dbx` revocation update.
+    Affected the custom-PK path (`_stage_build_kek_esl`).
+- **`audit.sh` reported the missing certificates as expected.** Absence of
+  `Microsoft Windows Production PCA 2011` from `db` was logged as `INFO`
+  ("expected absent in current provisioning"); it is now a `WARNING` naming the
+  boot-failure consequence. A matching warning was added for a missing
+  `Microsoft KEK CA 2011`. Neither is gated on whether the user runs their own
+  KEK chain: a user-owned KEK lets the *user* sign db/dbx updates, but does
+  nothing to make Microsoft's published, 2011-KEK-signed updates verify — so
+  the warning matters most on exactly the custom-owned machines that earlier
+  releases mis-provisioned.
+
+- **`stage_bios_entries()` discarded almost every OEM certificate.** It gated
+  each `KEKDefault`/`dbDefault` member on its SHA-1 appearing as a key in
+  `kek_update_map.json`, but that map is keyed on *Platform Key* fingerprints —
+  one entry per OEM platform, mapping a vendor PK to that platform's KEK update
+  package. The certificates being tested are KEK and db certificates, not PKs,
+  so they essentially never matched and the operation was close to a no-op.
+  That silently destroyed the vendor trust anchors it exists to preserve,
+  breaking OEM recovery tooling (HP Sure Recover, Dell SupportAssist OS
+  Recovery, Lenovo UEFI diagnostics) and OEM-signed option ROMs. Staging now
+  rests on the two checks that were always correct — reject known
+  test/placeholder certificates, skip Microsoft-owned ones — and the map is
+  used for what it is actually for: recognising the platform from its PK,
+  logged for provenance. Covered by `scripts/test-bios-entries.sh`.
+
+- **`mount_efivars()` could abort on a benign race.** Its `mountpoint` check is
+  not atomic, so a second process mounting efivarfs in between made the loser
+  fail with `Device or resource busy` and abort the whole run. It now re-checks
+  after a failed mount and continues if the filesystem is present.
 
 [Unreleased]: https://github.com/mcfbytes/sb-enema/commits/HEAD
