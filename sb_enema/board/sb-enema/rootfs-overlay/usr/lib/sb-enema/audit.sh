@@ -265,6 +265,23 @@ audit_kek() {
             "Legacy Microsoft KEK (2011) present without 2023 replacement"
     fi
 
+    # The 2011 KEK is not merely legacy baggage: every Microsoft Secure Boot
+    # servicing package published to date is signed under it, so a machine
+    # holding only the 2023 KEK cannot apply any Microsoft dbx revocation
+    # update that currently exists.
+    #
+    # Deliberately NOT gated on has_user_kek, unlike the 2023 check above. A
+    # user-owned KEK lets the *user* sign db/dbx updates; it does nothing to
+    # make Microsoft's published, 2011-KEK-signed dbx updates verify. Gating
+    # here would silence the warning on exactly the custom-owned machines that
+    # earlier SB-ENEMA releases mis-provisioned by filtering this KEK out —
+    # the machines that most need to be told. This matches the ungated db
+    # counterpart for Windows Production PCA 2011.
+    if [[ "${has_ms_kek_2011}" != "yes" ]]; then
+        _audit_add_finding "WARNING" "${component}" \
+            "Microsoft KEK CA 2011 missing from KEK — Microsoft-published dbx revocation updates are signed under it and will not apply"
+    fi
+
     rm -rf "${tmpdir}"
     return 0
 }
@@ -330,9 +347,14 @@ audit_db() {
         index=$((index + 1))
     done
 
+    # Absence is a compatibility problem, not the expected state.  This CA signs
+    # the Windows Boot Manager on any installation that has not yet received
+    # Microsoft's 2023-signed boot manager, plus WinRE and pre-migration install
+    # media.  Without it in db, those stop booting under Secure Boot.  Firmware
+    # ships it in dbDefault for the same reason.
     if [[ "${has_win_pca_2011}" != "yes" ]]; then
-        _audit_add_finding "INFO" "${component}" \
-            "Microsoft Windows Production PCA 2011 not in db (expected absent in current provisioning)"
+        _audit_add_finding "WARNING" "${component}" \
+            "Microsoft Windows Production PCA 2011 missing from db — a Windows installation whose boot manager is not yet re-signed under Windows UEFI CA 2023 will not boot"
     fi
 
     if [[ "${has_any_2023}" == "yes" ]]; then

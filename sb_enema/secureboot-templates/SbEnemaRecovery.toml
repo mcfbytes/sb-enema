@@ -1,0 +1,154 @@
+# @file
+# Template Name: SB-ENEMA Recovery — Microsoft chain, recovery-safe
+# 
+# This is SB-ENEMA's own keystore template.  It is deliberately NOT one of the
+# stock microsoft/secureboot_objects templates, because none of them match what
+# a *recovery* tool needs.  It lives outside third_party/ so a submodule bump
+# cannot silently change enrollment policy.
+# 
+# Consumed by scripts/prepare-secureboot-objects.sh, which runs
+# secureboot_objects/scripts/secure_boot_default_keys.py with the submodule as
+# the working directory.  Every `path` below is therefore relative to the
+# submodule root, exactly as in the stock templates.
+# 
+# ---------------------------------------------------------------------------
+# Why this exists rather than a stock template
+# ---------------------------------------------------------------------------
+# db: MostCompatible is the only stock template that keeps "Microsoft Windows
+#     Production PCA 2011", and that certificate is mandatory here — see the
+#     [DB] notes below.  We take MostCompatible's db verbatim.
+# 
+# KEK: no stock template matches.  Every stock template except the deprecated
+#     LegacyFirmwareDefaults ships the 2023 KEK *only*.  That is correct for
+#     factory provisioning of a new machine, but wrong for a tool that
+#     re-provisions a machine already in the field: as of 2026-07 every
+#     Microsoft-published Secure Boot servicing package is still signed under
+#     the 2011 KEK.  Verified directly against the vendored submodule —
+#     PostSignedObjects/DBX/{x86,amd64,arm,arm64}/DBXUpdate.bin all carry a
+#     PKCS#7 signer chaining "Microsoft Windows UEFI Key Exchange Key" ->
+#     "Microsoft Corporation KEK CA 2011".  Zero packages chain to the 2023
+#     KEK.  A machine holding only the 2023 KEK therefore cannot apply any
+#     Microsoft dbx revocation update that currently exists, and would sit on a
+#     frozen revocation list indefinitely.  So we ship both.
+# 
+# Certificate expiry is deliberately NOT a reason to drop anything here.  UEFI
+# image verification does not check X.509 validity dates: the spec's
+# authorization process (§32.5) has no expiry step, and edk2's Pkcs7Verify()
+# passes X509_V_FLAG_NO_CHECK_TIME precisely so that a dead CMOS battery cannot
+# brick a machine.  Revocation is expressed through dbx and only through dbx.
+# An expired-but-unrevoked CA in db still validates the binaries it signed, and
+# dropping it buys no security while breaking those binaries.
+# 
+# Review date: 2026-10-19 (Windows Production PCA 2011 notAfter).  Revisit the
+# db entry below once Microsoft's 2023 boot-manager rollout has completed and
+# Microsoft ships the PCA 2011 revocation in the default dbx rather than the
+# opt-in DBXUpdate2024 package.
+# 
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# (Derived from microsoft/secureboot_objects Templates/MostCompatible.toml,
+#  Copyright (C) Microsoft Corporation.)
+# 
+################################
+# PK — Platform Key            #
+################################
+[PK]
+help = "Microsoft's Windows OEM Devices PK. Enrolled only on the Microsoft-owned path; the custom-owned path replaces this with a user-generated PK."
+
+[[PK.files]]
+path = "PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der"
+sha1 = 0x3D8660C0CB2D57B189C3D7995572A552F75E48B5
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "Platform Key (owner) who may authorize changes to the KEK Variable"
+
+###################################
+# KEK — Key Exchange Keys         #
+###################################
+[KEK]
+help = "Both Microsoft KEKs. The 2023 KEK is the forward-looking anchor; the 2011 KEK is what every currently-published Microsoft db/dbx servicing package is actually signed under."
+
+[[KEK.files]]
+path = "PreSignedObjects/KEK/Certificates/microsoft corporation kek 2k ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239775"
+sha1 = 0x459AB6FB5E284D272D5E3E6ABC8ED663829D632B
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ Microsoft authorizes signature database updates"
+
+[[KEK.files]]
+path = "PreSignedObjects/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der"
+url = "https://go.microsoft.com/fwlink/?LinkId=321185"
+sha1 = 0x31590BFD89C9D74ED087DFAC66334B3931254B30
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "Signer of every Microsoft dbx/db servicing package published to date; required for the machine to accept future Microsoft revocation updates"
+
+##################################
+# DB — Allowed Signature DB      #
+##################################
+[DB]
+help = "Both certificate generations, matching the dbDefault that shipping firmware carries. Anything signed by the 2011 or 2023 CAs will execute."
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/windows uefi ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239776"
+sha1 = 0x45A0FA32604773C82433C3B7D59E7466B3AC0C67
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed Windows boot media (e.g. 2023 signed Windows)"
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/microsoft uefi ca 2023.der"
+url = "https://go.microsoft.com/fwlink/?linkid=2239872"
+sha1 = 0xB5EEB4A6706048073F0ED296E7F580A790B59EAA
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed third-party UEFI applications (e.g. 2023 signed Linux shim)"
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/microsoft option rom uefi ca 2023.der"
+url = "http://www.microsoft.com/pkiops/certs/microsoft%20option%20rom%20uefi%20ca%202023.crt"
+sha1 = 0x3FB39E2B8BD183BF9E4594E72183CA60AFCD4277
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2023+ signed third-party option ROMs (graphics/storage/networking)"
+
+# Required for compatibility, not optional.  This CA signs the Windows Boot
+# Manager on every Windows installation that has not yet received Microsoft's
+# 2023-signed boot manager — a rollout that is staged and, as of 2026-07, still
+# incomplete.  It also covers WinRE, installation media, and recovery/PXE images
+# created before the 2023 migration.  Omitting it leaves an otherwise healthy
+# Windows install unbootable with Secure Boot on, which is the single worst
+# outcome for a recovery tool.  Note that firmware ships this in dbDefault too.
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/MicWinProPCA2011_2011-10-19.der"
+url = "https://go.microsoft.com/fwlink/p/?linkid=321192"
+sha1 = 0x580A6F4CC4E4B669B9EBDC1B2B3E087B80D0678D
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2011 signed Windows boot media (Windows Boot Manager on unmigrated installs)"
+
+[[DB.files]]
+path = "PreSignedObjects/DB/Certificates/MicCorUEFCA2011_2011-06-27.der"
+url = "https://go.microsoft.com/fwlink/p/?linkid=321194"
+sha1 = 0x46DEF63B5CE61CF8BA0DE2E6639C1019D0ED14F3
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"
+description = "2011 signed third-party UEFI applications and option ROMs (shims and add-in cards in the field)"
+
+############################
+# DBX — Forbidden          #
+############################
+[DBX]
+help = "Microsoft's revocation list, filtered per architecture."
+
+# Unlike the certificate entries above, this source file legitimately changes
+# whenever Microsoft publishes new revocations, so the hash below must be
+# refreshed on every secureboot_objects bump.  That is deliberate: a change to
+# what is revoked is a policy change worth a human look, since a dbx entry can
+# stop a machine booting.  prepare-secureboot-objects.sh fails the build until
+# it is updated.
+#
+#   sha1sum third_party/secureboot_objects/PreSignedObjects/DBX/dbx_info_msft_latest.json
+#
+# Note that every stock Microsoft template still declares
+# 0x8818A4486178E0B253FBBB6F0A9E64DC144E2480 here, which has been stale since
+# upstream last updated this file (2025-10-24).  Their generator ignores the
+# field, so nothing upstream noticed; ours checks it, so the value below is the
+# real one.
+[[DBX.files]]
+path = "PreSignedObjects/DBX/dbx_info_msft_latest.json"
+sha1 = 0x7D0552967FAECE191ED1BE2262C8B2EEE5EB3D15
+signature_owner = "77fa9abd-0359-4d32-bd60-28f4e78f784b"

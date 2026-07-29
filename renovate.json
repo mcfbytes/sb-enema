@@ -6,6 +6,13 @@
   "git-submodules": {
     "enabled": true
   },
+  "customDatasources": {
+    "kernel-org": {
+      "description": "kernel.org publishes its release index in the shape Renovate's custom datasource expects: {\"releases\": [{\"version\": ...}]}",
+      "defaultRegistryUrlTemplate": "https://www.kernel.org/releases.json",
+      "format": "json"
+    }
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -19,13 +26,33 @@
       "depNameTemplate": "buildroot/buildroot",
       "datasourceTemplate": "github-tags",
       "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the pinned Linux kernel in the Buildroot defconfig. NOTE: sb_enema/patches/linux/linux.hash must be updated in the same PR. With BR2_DOWNLOAD_FORCE_CHECK_HASHES=y set in the defconfig the build fails closed with 'ERROR: No hash found' until it is — do not merge a kernel bump that removes that option.",
+      "managerFilePatterns": [
+        "/(^|/)sb_enema_defconfig$/"
+      ],
+      "matchStrings": [
+        "BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE=\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "linux",
+      "datasourceTemplate": "custom.kernel-org",
+      "versioningTemplate": "loose"
     }
   ],
   "packageRules": [
     {
+      "description": "Track the Buildroot 2026.05 series; moving to a new series is a deliberate, manually-validated change",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["buildroot/buildroot"],
-      "allowedVersions": "/^2026\\.02(\\.\\d+)?$/"
+      "allowedVersions": "/^2026\\.05(\\.\\d+)?$/"
+    },
+    {
+      "description": "Track 6.18.x longterm point releases only; moving off the 6.18 LTS series is a deliberate change",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["linux"],
+      "allowedVersions": "/^6\\.18\\.\\d+$/"
     },
     {
       "description": "Track the secureboot_objects submodule by plain vX.Y.Z tags only (not branch commits), ignoring the -signed variant",

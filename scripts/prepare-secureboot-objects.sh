@@ -6,7 +6,26 @@ SUBMODULE="${SUBMODULE:-${ROOT_DIR}/third_party/secureboot_objects}"
 VENV_DIR="${VENV_DIR:-${ROOT_DIR}/output/secureboot-venv}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-${ROOT_DIR}/output/secureboot-artifacts}"
 STAGING_DIR="${STAGING_DIR:-${ROOT_DIR}/output/secureboot-staging}"
-TEMPLATE_NAME="${TEMPLATE_NAME:-MicrosoftAndThirdParty}"
+
+# Keystore template driving what lands in PK/KEK/db/dbx.
+#
+# This is SB-ENEMA's own template, NOT one of the stock
+# third_party/secureboot_objects/Templates/*.toml.  None of the stock templates
+# fit a recovery tool: the ones that keep "Microsoft Windows Production PCA
+# 2011" in db drop the 2011 KEK, and vice versa.  See the header of
+# SbEnemaRecovery.toml for the full rationale and evidence.
+#
+# Keeping it outside third_party/ means a submodule bump cannot silently change
+# which certificates we enroll.  Override with KEYSTORE=/path/to/other.toml to
+# build a different policy (e.g. one of the stock Microsoft templates).
+KEYSTORE="${KEYSTORE:-${ROOT_DIR}/sb_enema/secureboot-templates/SbEnemaRecovery.toml}"
+
+# secure_boot_default_keys.py names its output directory after the keystore's
+# basename, so TEMPLATE_NAME must be derived from KEYSTORE rather than set
+# independently — otherwise the rsync below reads a path that does not exist.
+TEMPLATE_NAME="$(basename "${KEYSTORE}")"
+TEMPLATE_NAME="${TEMPLATE_NAME%%.*}"
+
 ARCH="${ARCH:-X64}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -14,6 +33,15 @@ if [ ! -d "${SUBMODULE}" ]; then
     echo "Secure Boot objects submodule not found at ${SUBMODULE}" >&2
     exit 1
 fi
+
+if [ ! -f "${KEYSTORE}" ]; then
+    echo "Keystore template not found at ${KEYSTORE}" >&2
+    exit 1
+fi
+
+# The generator runs from the submodule root, so a relative KEYSTORE would
+# resolve against the wrong directory there even though the check above passed.
+KEYSTORE="$(cd "$(dirname "${KEYSTORE}")" && pwd)/$(basename "${KEYSTORE}")"
 
 git -C "${ROOT_DIR}" submodule update --init --recursive third_party/secureboot_objects
 
@@ -24,14 +52,80 @@ fi
 "${VENV_DIR}/bin/pip" install --upgrade pip >/dev/null
 "${VENV_DIR}/bin/pip" install -r "${SUBMODULE}/pip-requirements.txt" >/dev/null
 
+# Verify that every certificate the keystore names still hashes to the value the
+# keystore records.  secure_boot_default_keys.py ignores the `sha1` fields
+# entirely, so without this they are decorative: a submodule bump that swapped a
+# certificate's contents while keeping its filename would silently change what
+# gets enrolled.  Pinning the template's paths only helps if the bytes behind
+# them are pinned too.
+echo "Verifying keystore certificate fingerprints..."
+"${PYTHON_BIN}" - "${KEYSTORE}" "${SUBMODULE}" <<'PYEOF'
+import hashlib
+import pathlib
+import sys
+import tomllib
+
+keystore_path, submodule = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+with keystore_path.open("rb") as handle:
+    keystore = tomllib.load(handle)
+
+problems = []
+checked = 0
+for variable, section in keystore.items():
+    for entry in section.get("files", []):
+        path = submodule / entry["path"]
+        expected = entry.get("sha1")
+        if expected is None:
+            continue
+        if not path.is_file():
+            problems.append(f"{variable}: missing file {entry['path']}")
+            continue
+        # Only certificates carry a meaningful thumbprint; the DBX json entry's
+        # sha1 describes the source document and is checked the same way.
+        actual = hashlib.sha1(path.read_bytes()).hexdigest()
+        if actual != f"{expected:040x}".lower():
+            problems.append(
+                f"{variable}: {entry['path']}\n"
+                f"      keystore says 0x{expected:040X}\n"
+                f"      file is     0x{actual.upper()}"
+            )
+        checked += 1
+
+if problems:
+    print("\nERROR: keystore fingerprint mismatch:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+    print(
+        "\nA certificate's contents changed without its sha1 in the keystore "
+        "being updated.\nIf this followed a secureboot_objects bump, review what "
+        "changed before\nupdating the keystore -- this is the check that stops a "
+        "submodule bump from\nsilently altering which certificates get enrolled.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+print(f"  {checked} keystore fingerprint(s) verified")
+PYEOF
+
 mkdir -p "${ARTIFACT_DIR}"
 
 (
+    # The generator resolves every `path` in the keystore relative to its own
+    # working directory, so it must run from the submodule root.  KEYSTORE is
+    # absolute for exactly this reason.
     cd "${SUBMODULE}"
     PYTHONPATH="scripts" "${VENV_DIR}/bin/python" scripts/secure_boot_default_keys.py \
-        --keystore "Templates/${TEMPLATE_NAME}.toml" \
+        --keystore "${KEYSTORE}" \
         -o "${ARTIFACT_DIR}"
 )
+
+# Fail the build before staging anything if the generated key set violates the
+# certificate-policy invariants (see check-secureboot-policy.py for what and why).
+echo "Checking Secure Boot certificate policy invariants..."
+"${PYTHON_BIN}" "${ROOT_DIR}/scripts/check-secureboot-policy.py" \
+    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/DB.bin" \
+    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/DBX.bin" \
+    "${ARTIFACT_DIR}/${ARCH}/${TEMPLATE_NAME}/Firmware/KEK.bin"
 
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/secureboot_artifacts"

@@ -34,12 +34,33 @@ MSFT_PAYLOADS_SUBDIR="${PAYLOAD_DIR}/microsoft"
 MSFT_PRESIGNED_DIR="${DATA_MOUNT}/PreSignedObjects"
 
 # ---------------------------------------------------------------------------
-# SHA-256 fingerprints of legacy Microsoft certificates excluded from the
-# Custom-Owned (user-key) enrollment path.  Both are expiring in 2026 and
-# are superseded by their 2023 counterparts.
+# Certificate policy for the Custom-Owned (user-key) path
+#
+# Every Microsoft certificate shipped in PreSignedObjects is enrolled; nothing
+# is filtered out.  Earlier revisions dropped "Microsoft Corporation KEK CA
+# 2011" from KEK and "Microsoft Windows Production PCA 2011" from db on the
+# grounds that both expire in 2026 and are superseded by 2023 replacements.
+# Both exclusions were wrong, for separate reasons:
+#
+#   db  — Windows Production PCA 2011 signs the Windows Boot Manager on every
+#         installation that has not yet received Microsoft's 2023-signed boot
+#         manager (a staged rollout still incomplete as of 2026-07), plus WinRE
+#         and any install/recovery media predating the migration.  Dropping it
+#         leaves a healthy Windows install unbootable under Secure Boot.
+#
+#   KEK — every Microsoft Secure Boot servicing package published to date is
+#         signed under KEK CA 2011, not the 2023 KEK.  Verified against the
+#         vendored submodule: PostSignedObjects/DBX/*/DBXUpdate.bin all chain
+#         "Microsoft Windows UEFI Key Exchange Key" -> "Microsoft Corporation
+#         KEK CA 2011".  Without it the machine can never apply a Microsoft dbx
+#         revocation update.
+#
+# Expiry itself is not a reason to exclude anything: UEFI image verification
+# does not check X.509 validity dates (spec 32.5 has no expiry step; edk2's
+# Pkcs7Verify passes X509_V_FLAG_NO_CHECK_TIME).  Revocation happens through
+# dbx, and dbx alone.  The build-time counterpart to this policy is enforced by
+# scripts/check-secureboot-policy.py.
 # ---------------------------------------------------------------------------
-readonly _STAGE_MS_KEK_CA_2011_FP="a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503"
-readonly _STAGE_MS_WIN_PCA_2011_FP="e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961"
 
 # ---------------------------------------------------------------------------
 # Path to kek_update_map.json — maps SHA-1 PK fingerprints to KEK update bins.
@@ -458,33 +479,6 @@ stage_microsoft_kek_db_dbx() {
 }
 
 # ---------------------------------------------------------------------------
-# _stage_cert_fp <pem_file>
-#   Print the SHA-256 fingerprint of a PEM certificate as lowercase hex
-#   without colons.  Returns an empty string on error.
-# ---------------------------------------------------------------------------
-_stage_cert_fp() {
-    local cert="$1"
-
-    [[ -f "$cert" && -r "$cert" ]] || return 0
-
-    local fp
-    if ! fp="$(
-        (
-            # Disable errexit and pipefail in this subshell so failures in the
-            # pipeline do not abort the whole script. On any error, the command
-            # substitution will fail and we return success with empty output.
-            set +e +o pipefail
-            openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null \
-                | _fp_normalize
-        )
-    )"; then
-        return 0
-    fi
-
-    printf '%s\n' "$fp"
-}
-
-# ---------------------------------------------------------------------------
 # _stage_build_kek_esl <workdir> <kek_crt> <owner_guid>
 #   Internal helper: combine user KEK + Microsoft KEK + any vendor-staged KEK
 #   certificates into a single ESL at <workdir>/KEK.esl.
@@ -527,17 +521,9 @@ _stage_build_kek_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
-            # Exclude legacy Microsoft Corporation KEK CA 2011 from Custom-Owned
-            # enrollments.  The 2023 replacement (KEK 2K CA 2023) is the current
-            # recommended KEK for all new provisioning.
-            local cert_fp
-            cert_fp=$(_stage_cert_fp "${cert_pem}")
-            if [[ -z "${cert_fp}" ]]; then
-                log_warn "Could not compute fingerprint for KEK cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_KEK_CA_2011_FP}" ]]; then
-                log_info "Excluding legacy Microsoft Corporation KEK CA 2011 from Custom-Owned KEK"
-                continue
-            fi
+            # No filtering: both Microsoft KEKs are enrolled.  See the
+            # certificate-policy note at the top of this file for why the 2011
+            # KEK is required rather than merely tolerated.
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
                 || die "cert-to-efi-sig-list failed for Microsoft KEK certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"
@@ -603,19 +589,10 @@ _stage_build_db_esl() {
                     cert_pem="${cert_file}"
                     ;;
             esac
-            # Exclude legacy Microsoft Windows Production PCA 2011 from Custom-Owned
-            # db enrollments.  This PCA is superseded by Windows UEFI CA 2023 and is
-            # not a UEFI Secure Boot certificate.  The 2023 replacement certificates
-            # (Microsoft UEFI CA 2023, Microsoft Option ROM UEFI CA 2023) are present
-            # in PreSignedObjects and will be included via this same loop.
-            local cert_fp
-            cert_fp=$(_stage_cert_fp "${cert_pem}")
-            if [[ -z "${cert_fp}" ]]; then
-                log_warn "Could not compute fingerprint for db cert $(basename "${cert_file}"); including it"
-            elif [[ "${cert_fp}" == "${_STAGE_MS_WIN_PCA_2011_FP}" ]]; then
-                log_info "Excluding Microsoft Windows Production PCA 2011 from Custom-Owned db"
-                continue
-            fi
+            # No filtering: every Microsoft db certificate staged into
+            # PAYLOAD_DIR/db is enrolled, both 2011 and 2023 generations.  See
+            # the certificate-policy note at the top of this file for why
+            # Windows Production PCA 2011 must stay.
             cert-to-efi-sig-list -g "${owner_guid}" "${cert_pem}" "${tmp_esl}" \
                 || die "cert-to-efi-sig-list failed for db certificate $(basename "${cert_file}")"
             cat "${tmp_esl}" >> "${combined_esl}"

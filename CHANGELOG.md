@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Certificate policy: stop dropping certificates that machines need in order
+  to boot.** Both enrollment paths previously removed Microsoft certificates on
+  the grounds that they expire in 2026. Both removals were wrong, because UEFI
+  image verification never checks certificate validity dates (the spec's
+  authorization process has no expiry step, and EDK II's `Pkcs7Verify()` passes
+  `X509_V_FLAG_NO_CHECK_TIME`). Revocation is expressed through `dbx` alone.
+  - `Microsoft Windows Production PCA 2011` is enrolled in `db` again. It signs
+    the Windows Boot Manager on any installation that has not yet received
+    Microsoft's 2023-signed boot manager — a staged rollout still incomplete as
+    of mid-2026 — plus WinRE and pre-migration install media. Without it, a
+    re-provisioned machine could no longer Secure-Boot the Windows install that
+    was working before the tool ran. Affected the Microsoft path (via the
+    `MicrosoftAndThirdParty` template) and the custom-PK path (via a
+    fingerprint filter in `_stage_build_db_esl`).
+  - `Microsoft Corporation KEK CA 2011` is enrolled in `KEK` again. Every
+    Microsoft Secure Boot servicing package published to date is signed under
+    it, not the 2023 KEK — verifiable from the PKCS#7 signer of
+    `PostSignedObjects/DBX/*/DBXUpdate.bin` in the submodule. Excluding it left
+    the machine unable to apply any existing Microsoft `dbx` revocation update.
+    Affected the custom-PK path (`_stage_build_kek_esl`).
+- **`audit.sh` reported the missing certificates as expected.** Absence of
+  `Microsoft Windows Production PCA 2011` from `db` was logged as `INFO`
+  ("expected absent in current provisioning"); it is now a `WARNING` naming the
+  boot-failure consequence. A matching warning was added for a missing
+  `Microsoft KEK CA 2011`. Neither is gated on whether the user runs their own
+  KEK chain: a user-owned KEK lets the *user* sign db/dbx updates, but does
+  nothing to make Microsoft's published, 2011-KEK-signed updates verify — so
+  the warning matters most on exactly the custom-owned machines that earlier
+  releases mis-provisioned.
+
+### Added
+
+- **SB-ENEMA keystore template**
+  (`sb_enema/secureboot-templates/SbEnemaRecovery.toml`): the certificate set
+  is now defined by a repo-owned template rather than one of the stock
+  `secureboot_objects` templates, so a submodule bump cannot silently change
+  enrollment policy. No stock template fits a recovery tool — the ones that
+  keep `Windows Production PCA 2011` in `db` drop the 2011 KEK, and vice versa.
+  Override with `KEYSTORE=` when running `prepare-secureboot-objects.sh`.
+- **Build-time policy guard** (`scripts/check-secureboot-policy.py`): fails the
+  build if the generated `db` or `KEK` omits a compatibility-critical
+  certificate, or if the generated `dbx` revokes a certificate that `db`
+  depends on. The latter is the brick condition — a `dbx` match beats a `db`
+  match — and the db policy above is only safe while it holds, so it is now
+  enforced instead of assumed. Revocation is detected both as a full
+  `EFI_CERT_X509` entry and as an `EFI_CERT_X509_SHA{256,384,512}` hash of the
+  TBSCertificate (the encoding firmware actually uses to revoke a CA), and any
+  unrecognised `dbx` signature type is a failure rather than being ignored.
+- **Keystore fingerprint verification** in `prepare-secureboot-objects.sh`:
+  every certificate the template names is checked against the `sha1` the
+  template records before generation. Microsoft's generator ignores those
+  fields entirely, so without this they were decorative and "a submodule bump
+  cannot silently change enrollment policy" held only for filenames, not
+  contents. This immediately surfaced that every stock Microsoft template
+  carries a stale hash for `dbx_info_msft_latest.json`.
+- **Buildroot tarball is now SHA-256 verified** against the PGP-signed release
+  manifest before extraction. Buildroot builds and verifies everything else in
+  the image, so it was the one unpinned link in the chain. Verification writes
+  to a temporary file and only promotes it on success, so a failed check cannot
+  leave a poisoned tarball for a later run or a CI cache to reuse.
+- **Certificate policy regression tests** (`scripts/test-cert-policy.sh`):
+  asserts that both enrollment paths enroll every shipped Microsoft
+  certificate, that the keystore template declares the expected sets, and that
+  the policy guard accepts good and rejects bad key sets. The original
+  exclusions were never covered by a test, which is why they survived.
+- **CI now runs the shell test suite** (`unit-tests` job in `lint.yml`). The
+  build workflow excludes `rootfs-overlay/**` via `paths-ignore`, so the
+  `scripts/test-*.sh` suite previously never ran in CI at all.
+
+### Changed
+
+- **Buildroot 2026.02.3 → 2026.05.1.**
+- **Kernel pinned to 6.18.40 longterm** via `BR2_LINUX_KERNEL_CUSTOM_VERSION`,
+  replacing Buildroot's default (`BR2_LINUX_KERNEL_LATEST_VERSION`, which is
+  7.0.11 in Buildroot 2026.05.1 and moves with every Buildroot bump). The
+  tarball SHA-256 is pinned in `sb_enema/patches/linux/linux.hash`, with
+  `sb_enema/patches/linux-headers/linux-headers.hash` symlinked to it because
+  `linux-headers` downloads the same tarball. Because Buildroot exempts
+  custom-pinned versions from hash checking by default, this also sets
+  `BR2_DOWNLOAD_FORCE_CHECK_HASHES=y`; without it a version bump with a stale
+  hash file would silently download an unverified tarball instead of failing.
+- **Renovate** tracks the pinned kernel through a custom `kernel.org`
+  datasource (constrained to 6.18.x) and the Buildroot 2026.05 series.
+- **GitHub Actions runners moved to `ubuntu-26.04`** across all workflows.
+  Note that this image is still in public preview on GitHub-hosted runners.
+
 ### Added
 
 - **Audit engine** (`audit.sh`): detects test/invalid PKs, validates certificate
