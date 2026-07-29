@@ -59,7 +59,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libncurses5-dev libelf-dev \
             rsync cpio unzip wget xz-utils file python3-venv curl git \
-            pkg-config libffi-dev mtools
+            pkg-config libffi-dev mtools qemu-system-x86 ovmf
 
       # Ubuntu 26.04 ships uutils coreutils as the default `install`, and
       # Buildroot refuses to build against it (uutils/coreutils#12166 corrupts
@@ -113,6 +113,22 @@ jobs:
       - name: Build images
         run: |
           make -j$(nproc) BR2_CCACHE=y BR2_CCACHE_DIR=$GITHUB_WORKSPACE/.ccache BR2_CCACHE_USE_BASEDIR=y
+
+      # Boots the image under OVMF and performs a real Custom-Owned enrollment,
+      # then asserts the firmware variable store actually contains the
+      # certificates we intended to enroll. Covers what the stubbed unit tests
+      # cannot: efivarfs, the authenticated-variable write path, enrollment
+      # order, and the pinned kernel actually booting.
+      - name: QEMU enrollment test
+        run: bash scripts/qemu-enroll-test.sh
+
+      - name: Upload serial log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qemu-serial-log
+          path: /tmp/qemu-serial.log
+          if-no-files-found: ignore
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

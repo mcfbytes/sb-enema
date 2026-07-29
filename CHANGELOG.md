@@ -79,16 +79,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI now runs the shell test suite** (`unit-tests` job in `lint.yml`). The
   build workflow excludes `rootfs-overlay/**` via `paths-ignore`, so the
   `scripts/test-*.sh` suite previously never ran in CI at all.
+- **QEMU enrollment test** (`scripts/qemu-enroll-test.sh`, wired into the build
+  workflow): boots the built image under OVMF in Setup Mode, performs a real
+  Custom-Owned enrollment, and then asserts against the *firmware variable
+  store itself* that every intended certificate was enrolled — including
+  Windows Production PCA 2011 and Microsoft KEK CA 2011. This covers what the
+  stubbed unit tests cannot: efivarfs, the authenticated-variable write path in
+  `efi-updatevar`, enrollment order, and the pinned kernel actually booting.
+- **Serial console and a second getty on `ttyS0`** so the image is drivable
+  non-interactively. `/dev/console` deliberately remains `tty0` (the kernel
+  cmdline lists `ttyS0` first and `tty0` last) so a machine with no usable
+  serial port still shows the tool on screen; the serial line gets a plain
+  shell rather than auto-starting the menu, since two concurrent instances
+  raced to mount efivarfs.
+
+### Fixed (runtime)
+
+- **`mount_efivars()` could abort on a benign race.** Its `mountpoint` check is
+  not atomic, so a second process mounting efivarfs in between made the loser
+  fail with `Device or resource busy` and abort the whole run. It now re-checks
+  after a failed mount and continues if the filesystem is present.
 
 ### Changed
 
 - **`third_party/secureboot_objects` → v1.6.5**, bringing 12 new x64 and 1 new
   ia32 image revocations into `dbx` (431 → 443 x64 hashes). The bump was gated
   by the new keystore fingerprint check, and the resulting `dbx` was reviewed
-  before the hash was refreshed: `svns` is unchanged, and `certificates` still
-  holds exactly one entry (the PCA 2011 CVE-2023-24932 record, which the
-  upstream converter does not render into the ESL) — so the db policy invariant
-  above still holds.
+  before the hash was refreshed. `certificates` still holds exactly one entry
+  (the PCA 2011 CVE-2023-24932 record), so the db policy invariant above still
+  holds. The `svns` list did change — the Windows Boot Manager SVN moved from
+  7.0 (CVE-2023-24932) to **9.0 (CVE-2026-45654)**, and upstream corrected a
+  byte-order typo in all three displayed GUIDs — but neither `certificates` nor
+  `svns` is rendered into the built ESL by the upstream converter, which emits
+  image hashes only.
 - **Buildroot 2026.02.3 → 2026.05.1.**
 - **Kernel pinned to 6.18.40 longterm** via `BR2_LINUX_KERNEL_CUSTOM_VERSION`,
   replacing Buildroot's default (`BR2_LINUX_KERNEL_LATEST_VERSION`, which is
