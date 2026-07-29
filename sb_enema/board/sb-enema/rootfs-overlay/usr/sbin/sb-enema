@@ -144,10 +144,13 @@ handle_microsoft_colonic() {
 
     echo -e "${YELLOW}  ⚠  This will replace your vendor's Platform Key with Microsoft's.${RESET}"
     echo -e "${YELLOW}  ⚠  OEM-specific Secure Boot features may stop working.${RESET}"
-    echo -e "${DIM}  ℹ  Some firmware (recent EDK2/OVMF, a few OEMs) rejects Microsoft's${RESET}"
-    echo -e "${DIM}     pre-signed PK payload in Setup Mode.  If the first PK write fails,${RESET}"
-    echo -e "${DIM}     the tool automatically retries with a throwaway-signed wrapper${RESET}"
-    echo -e "${DIM}     (the cert that ends up in PK is unchanged).${RESET}"
+    echo -e "${DIM}  ℹ  Some firmware rejects Microsoft's pre-signed PK payload in Setup${RESET}"
+    echo -e "${DIM}     Mode.  The tool retries once with a throwaway-signed wrapper (the${RESET}"
+    echo -e "${DIM}     cert that ends up in PK is unchanged).${RESET}"
+    echo -e "${DIM}     On firmware that requires a self-signed PK — every OVMF/QEMU build${RESET}"
+    echo -e "${DIM}     tested — neither attempt can succeed, because the payload must be${RESET}"
+    echo -e "${DIM}     signed by Microsoft's private key.  KEK/db/dbx still enroll; only${RESET}"
+    echo -e "${DIM}     PK fails.  Use Full Colonic there.  See docs/microsoft-pk-ovmf.md.${RESET}"
     echo -e "${GREEN}  ✓  This is reversible: use your BIOS 'Restore Factory Keys' option.${RESET}"
     echo -e "${DIM}  ℹ  Trusting Redmond over your OEM — in Microsoft we trust.${RESET}"
     echo

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The QEMU test now covers the Microsoft payload chain**
+  (`scripts/qemu-enroll-test.sh` gained a `microsoft-chain` scenario running
+  `microsoft-suppository`). It asserts Microsoft's own pre-signed KEK/db/dbx
+  payloads enroll and that the firmware variable store ends up with all five db
+  certificates and both KEKs — the same payloads `microsoft-colonic` uses, so
+  the certificate policy is now covered on both main paths. 33 assertions
+  across the two scenarios.
+
+### Fixed
+
+- **Diagnosed why the Microsoft-owned PK cannot enroll under QEMU/OVMF, and
+  stopped mis-reporting it.** OVMF requires a PK update to be signed by the
+  private key of the certificate inside it; Microsoft's PK cannot satisfy that,
+  since only Microsoft holds that key. Measured directly: the same ESL signed
+  by a foreign key is rejected with `EFI_SECURITY_VIOLATION` while the
+  self-signed version is accepted, on all three secure-boot OVMF images the
+  `ovmf` package ships. The existing throwaway-resign fallback therefore cannot
+  help on such firmware, and never could. This is not a defect in SB-ENEMA and
+  does not affect real AMI/Insyde hardware, where the flow works.
+  - efitools surfaces the rejection as `Cannot write to PK, wrong filesystem
+    permissions`, which is doubly misleading — it is efitools' own string,
+    printed for the `EACCES` the kernel returns for
+    `EFI_SECURITY_VIOLATION`. The tool now explains the real cause and points
+    at Full Colonic or Microsoft Suppository instead of leaving the operator
+    chasing a filesystem error.
+  - Written up with the measurements in `docs/microsoft-pk-ovmf.md`; the menu
+    text no longer implies the retry is a general recovery.
+
 ### Fixed
 
 - **Certificate policy: stop dropping certificates that machines need in order

@@ -273,7 +273,49 @@ _enroll_pk_with_fallback() {
 
     # Second attempt: report failures normally this time -- there is no third
     # try, so the user needs to see the banner if this one also fails.
-    _enroll_var "PK" "${auth_file}" _epk_enrolled_ref "${expected_fps}"
+    if _enroll_var "PK" "${auth_file}" _epk_enrolled_ref "${expected_fps}"; then
+        return 0
+    fi
+
+    _enroll_explain_pk_rejection "${auth_file}"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# _enroll_explain_pk_rejection <auth_file>
+#   Both PK attempts failed.  efitools reports this as "Cannot write to PK,
+#   wrong filesystem permissions", which is doubly misleading: the message is
+#   efitools' own, and it is printed for EACCES, which is what the kernel
+#   returns when the *firmware* answers EFI_SECURITY_VIOLATION.  Nothing is
+#   wrong with the filesystem.
+#
+#   The common cause is firmware that requires a PK update to be signed by the
+#   private key of the certificate inside it.  Every OVMF/QEMU build tested
+#   behaves this way, and Microsoft's PK cannot satisfy it -- only Microsoft
+#   holds that key -- so neither the original payload nor the throwaway-signed
+#   retry can ever succeed there.  Say so plainly instead of leaving the
+#   operator with a filesystem error to chase.
+# ---------------------------------------------------------------------------
+_enroll_explain_pk_rejection() {
+    local auth_file="$1"
+
+    log_error "Firmware rejected both PK payloads"
+    log_info  "efitools reports this as 'wrong filesystem permissions', but that"
+    log_info  "is EACCES standing in for the firmware's EFI_SECURITY_VIOLATION."
+
+    # Only the Microsoft-owned path is structurally unfixable; a user-generated
+    # PK is self-signed by construction and would not hit this.
+    if [[ "${auth_file}" == "${PAYLOAD_DIR}/PK.auth" ]] \
+       && [[ -d "${PAYLOAD_DIR}/PK" ]] \
+       && compgen -G "${PAYLOAD_DIR}/PK/*.der" >/dev/null 2>&1; then
+        log_info "This firmware most likely requires a self-signed PK. Microsoft's"
+        log_info "PK cannot meet that requirement, because the update would have to"
+        log_info "be signed with Microsoft's private key."
+        log_info "KEK, db and dbx are unaffected and may already be enrolled."
+        log_info "Use Full Colonic (option 2) to take ownership with your own PK,"
+        log_info "or Microsoft Suppository (option 4) to keep your existing PK and"
+        log_info "still receive Microsoft's KEK/db/dbx."
+    fi
 }
 
 # ---------------------------------------------------------------------------
