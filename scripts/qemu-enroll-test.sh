@@ -67,7 +67,12 @@ QEMU_PID=""
 SERIAL_LOG_COPY="${SERIAL_LOG_COPY:-/tmp/qemu-serial.log}"
 
 cleanup() {
-    [[ -n "${QEMU_PID}" ]] && kill "${QEMU_PID}" 2>/dev/null || true
+    # Written as an explicit if rather than `A && B || C`: that idiom is not
+    # if-then-else -- C also runs when A succeeds but B fails -- and here that
+    # would silently swallow a kill failure.
+    if [[ -n "${QEMU_PID}" ]]; then
+        kill "${QEMU_PID}" 2>/dev/null || true
+    fi
     if [[ -f "${WORKDIR}/serial.log" ]]; then
         cp "${WORKDIR}/serial.log" "${SERIAL_LOG_COPY}" 2>/dev/null || true
     fi
