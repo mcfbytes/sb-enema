@@ -52,12 +52,17 @@ fi
 "${VENV_DIR}/bin/pip" install --upgrade pip >/dev/null
 "${VENV_DIR}/bin/pip" install -r "${SUBMODULE}/pip-requirements.txt" >/dev/null
 
-# Verify that every certificate the keystore names still hashes to the value the
-# keystore records.  secure_boot_default_keys.py ignores the `sha1` fields
-# entirely, so without this they are decorative: a submodule bump that swapped a
+# Verify that every certificate the keystore names still hashes to the values the
+# keystore records.  secure_boot_default_keys.py ignores these fields entirely,
+# so without this they are decorative: a submodule bump that swapped a
 # certificate's contents while keeping its filename would silently change what
 # gets enrolled.  Pinning the template's paths only helps if the bytes behind
 # them are pinned too.
+#
+# sha256 is the integrity anchor.  sha1 is checked as well, but only for
+# consistency with the field Microsoft's template schema uses to document a
+# certificate thumbprint -- SHA-1 is collision-broken and must not be what a
+# supply-chain check rests on.
 echo "Verifying keystore certificate fingerprints..."
 "${PYTHON_BIN}" - "${KEYSTORE}" "${SUBMODULE}" <<'PYEOF'
 import hashlib
@@ -74,21 +79,42 @@ checked = 0
 for variable, section in keystore.items():
     for entry in section.get("files", []):
         path = submodule / entry["path"]
-        expected = entry.get("sha1")
-        if expected is None:
-            continue
         if not path.is_file():
             problems.append(f"{variable}: missing file {entry['path']}")
             continue
-        # Only certificates carry a meaningful thumbprint; the DBX json entry's
-        # sha1 describes the source document and is checked the same way.
-        actual = hashlib.sha1(path.read_bytes()).hexdigest()
-        if actual != f"{expected:040x}".lower():
+
+        blob = path.read_bytes()
+
+        # The integrity anchor.
+        expected_sha256 = entry.get("sha256")
+        if expected_sha256 is None:
+            problems.append(
+                f"{variable}: {entry['path']} has no sha256 in the keystore; "
+                f"every entry must pin one"
+            )
+            continue
+        actual_sha256 = hashlib.sha256(blob).hexdigest()
+        if actual_sha256 != expected_sha256.lower():
             problems.append(
                 f"{variable}: {entry['path']}\n"
-                f"      keystore says 0x{expected:040X}\n"
-                f"      file is     0x{actual.upper()}"
+                f"      keystore sha256 {expected_sha256.lower()}\n"
+                f"      file     sha256 {actual_sha256}"
             )
+
+        # Secondary, non-security check: keeps the sha1 thumbprint field (the
+        # one Microsoft's schema documents) honest. usedforsecurity=False says
+        # explicitly that this is identifier matching, not integrity.
+        expected_sha1 = entry.get("sha1")
+        if expected_sha1 is not None:
+            actual_sha1 = hashlib.new(
+                "sha1", blob, usedforsecurity=False
+            ).hexdigest()
+            if actual_sha1 != f"{expected_sha1:040x}".lower():
+                problems.append(
+                    f"{variable}: {entry['path']} sha1 thumbprint is stale\n"
+                    f"      keystore says 0x{expected_sha1:040X}\n"
+                    f"      file is     0x{actual_sha1.upper()}"
+                )
         checked += 1
 
 if problems:

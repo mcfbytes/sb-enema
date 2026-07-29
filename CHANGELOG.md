@@ -60,12 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TBSCertificate (the encoding firmware actually uses to revoke a CA), and any
   unrecognised `dbx` signature type is a failure rather than being ignored.
 - **Keystore fingerprint verification** in `prepare-secureboot-objects.sh`:
-  every certificate the template names is checked against the `sha1` the
-  template records before generation. Microsoft's generator ignores those
-  fields entirely, so without this they were decorative and "a submodule bump
-  cannot silently change enrollment policy" held only for filenames, not
-  contents. This immediately surfaced that every stock Microsoft template
-  carries a stale hash for `dbx_info_msft_latest.json`.
+  every file the template names is checked against the hashes the template
+  records before generation. Microsoft's generator ignores those fields
+  entirely, so without this they were decorative and "a submodule bump cannot
+  silently change enrollment policy" held only for filenames, not contents.
+  This immediately surfaced that every stock Microsoft template carries a stale
+  hash for `dbx_info_msft_latest.json`. Each entry pins a **SHA-256** as the
+  integrity anchor — SHA-1 is collision-broken and must not be what a
+  supply-chain check rests on — with the schema's `sha1` thumbprint checked
+  alongside it purely for consistency.
 - **Buildroot tarball is now SHA-256 verified** against the PGP-signed release
   manifest before extraction. Buildroot builds and verifies everything else in
   the image, so it was the one unpinned link in the chain. Verification writes
