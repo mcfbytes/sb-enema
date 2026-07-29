@@ -283,25 +283,36 @@ _enroll_pk_with_fallback() {
 
 # ---------------------------------------------------------------------------
 # _enroll_explain_pk_rejection <auth_file>
-#   Both PK attempts failed.  efitools reports this as "Cannot write to PK,
-#   wrong filesystem permissions", which is doubly misleading: the message is
-#   efitools' own, and it is printed for EACCES, which is what the kernel
-#   returns when the *firmware* answers EFI_SECURITY_VIOLATION.  Nothing is
-#   wrong with the filesystem.
+#   Both PK attempts failed.  The usual cause is firmware that requires a PK
+#   update to be signed by the private key of the certificate inside it.  Every
+#   OVMF/QEMU build tested behaves this way, and Microsoft's PK cannot satisfy
+#   it -- only Microsoft holds that key -- so neither the original payload nor
+#   the throwaway-signed retry can ever succeed there.
 #
-#   The common cause is firmware that requires a PK update to be signed by the
-#   private key of the certificate inside it.  Every OVMF/QEMU build tested
-#   behaves this way, and Microsoft's PK cannot satisfy it -- only Microsoft
-#   holds that key -- so neither the original payload nor the throwaway-signed
-#   retry can ever succeed there.  Say so plainly instead of leaving the
-#   operator with a filesystem error to chase.
+#   In that case efitools prints "Cannot write to PK, wrong filesystem
+#   permissions", which is doubly misleading: the message is efitools' own, and
+#   it is printed for EACCES, which is what the kernel returns when the
+#   *firmware* answers EFI_SECURITY_VIOLATION.  Nothing is wrong with the
+#   filesystem.
+#
+#   _enroll_var can also fail for reasons this explanation does not cover -- a
+#   30-second timeout, or the system leaving Setup Mode between writes -- so the
+#   wording is conditional and the Setup Mode case is left to the message
+#   _enroll_var already emitted for it.
 # ---------------------------------------------------------------------------
 _enroll_explain_pk_rejection() {
     local auth_file="$1"
 
+    # Losing Setup Mode is already reported precisely by _enroll_var; adding a
+    # security-violation explanation on top of it would be wrong.
+    if ! safety_assert_setup_mode >/dev/null 2>&1; then
+        return 0
+    fi
+
     log_error "Firmware rejected both PK payloads"
-    log_info  "efitools reports this as 'wrong filesystem permissions', but that"
-    log_info  "is EACCES standing in for the firmware's EFI_SECURITY_VIOLATION."
+    log_info  "If efitools reported 'wrong filesystem permissions', that is not a"
+    log_info  "filesystem problem: it prints that for EACCES, which is what the"
+    log_info  "kernel returns for the firmware's EFI_SECURITY_VIOLATION."
 
     # Only the Microsoft-owned path is structurally unfixable; a user-generated
     # PK is self-signed by construction and would not hit this.

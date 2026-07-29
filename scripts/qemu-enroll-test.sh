@@ -268,8 +268,15 @@ for variable, name, relpath in expected:
 
 # The Microsoft PK is only expected on a path that enrolls it. Asserting its
 # ABSENCE on the suppository path is the point: that path must leave PK alone.
+#
+# A missing source file is a failure, not a reason to skip: silently dropping
+# the assertion would let an incomplete submodule turn this check into a no-op,
+# which is exactly the failure mode the rest of this script exists to prevent.
 pk = presigned / "PK/Certificate/WindowsOEMDevicesPK.der"
-if pk.is_file():
+if not pk.is_file():
+    print("MISSING-SOURCE|PK|Microsoft PK certificate not found in the submodule")
+    problems += 1
+else:
     found = pk.read_bytes() in store
     if found == expect_pk:
         print(f"PRESENT|PK|Microsoft PK {'enrolled' if found else 'correctly left untouched'}")
