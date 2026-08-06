@@ -59,7 +59,7 @@ BR2_LINUX_KERNEL=y
 # above is what makes them mandatory rather than advisory.  Bump the version
 # and the hash together or the build fails.
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
-BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.40"
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.43"
 
 # Kernel headers series, and it MUST be kept in step with the version above.
 #
