@@ -1,5 +1,5 @@
 # --- Buildroot versioning ----------------------------------------------------
-BUILDROOT_VERSION ?= 2026.05.1
+BUILDROOT_VERSION ?= 2026.05.3
 BUILDROOT_URL ?= https://buildroot.org/downloads/buildroot-$(BUILDROOT_VERSION).tar.gz
 
 # SHA-256 of the Buildroot tarball, taken from the PGP-signed release manifest
